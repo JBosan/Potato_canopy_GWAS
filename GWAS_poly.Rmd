@@ -1,0 +1,3440 @@
+---
+title: "GWAS_poly"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r, message=FALSE}
+library(GWASpoly) #for GWAS
+library(tidyverse) #for data manipulation + plotting
+library(ggrepel) #for dodging text labels on plots
+library(gridExtra) #for combining multiple ggplot objects
+library(writexl) #for saving to excel files
+```
+
+# Load data
+
+Here we load the phenotype and genotype data required for analysis.
+
+The genotype data consists of numerically coded data for 5718 SNPs across 282
+potatoes varieties (a subset of the data from Sharma et al., 2018).
+
+It also contains the chromosome and position of the SNPs.
+
+```{r}
+genotype <- read.csv(file = "raw_data/genotype/sharma_genotype_GWAS_poly.csv",
+                     check.names = FALSE)
+glimpse(genotype[1:10])
+```
+
+The phenotype data consists of Best Linear Unbiased Estimates (BLUEs) for
+phenotypic values of various traits of interest for the 282 varieties.
+
+These traits are:
+
+- Yield (Kg)
+- Max Max height (m) = maximum recorded height for max/highest point of plant
+- Max Ave height (m) = maximum average height
+- Max_area_plant (m2) = maximum plant area
+- Max_volume_plant (m3) = max plant volume
+
+Yield (Kg) was measured in 2016, 17, and 18, whilst the other traits were only
+measured in 2017 and 18.
+
+The data also contains principal components from PCA and the Q-matrix for K=3
+from the results of STRUCTURE which can be used as covariates in the P+K and Q+K
+methods respectively.
+
+```{r}
+phenotype <- read.csv(file = "BLUEs_output/BLUEs_with_Q_matrices_and_PCs.csv")
+glimpse(phenotype)
+```
+
+# Missing filtering
+
+Before performing GWAS we need to first filter based on the percentage of missing data (i.e. remove data is there is too much missing). This removes potential bias.
+
+We can check this per marker/SNP (row) as follows.
+
+```{r}
+p1 <- rowSums(is.na(genotype[,4:ncol(genotype)])) %>% #number of NAs for each SNP/row
+  as_tibble() %>% #convert to tibble
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(SNP = genotype$Marker) %>% #add col of SNP names
+  mutate(Percentage_NAs = Number_of_NAs/282*100) %>% #%NAs (/282 as 282 vars)
+  ggplot(mapping = 
+           aes(x = SNP, y = Percentage_NAs, #plot SNP vs % NA
+               label = SNP)) + #set up labels
+  geom_point() + #dotplot
+  geom_hline(yintercept = 20, col = "red", linewidth = 1) + #add threshold at 20% missing data
+  scale_y_continuous(limits = c(0,50), breaks = seq(0,50,10)) + #adjust y-scale
+  ylab("Percentage (%) missing data") +
+  xlab("SNP")+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_blank(), #remove x-axis text to make clearer
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+p1
+
+#save plot
+ggsave(
+  filename = 
+    "GWAS_poly_output/missing_data_per_SNP.pdf", 
+       plot = p1, device = pdf, width = 15, height = 10) 
+```
+
+On the graph the red line is a threshold of 20% missing data, based on the
+approach used in Sharma et al., 2018. However, its hard to tell how many SNPs 
+are missing more than 20% of the data so we can count them as follows.
+
+```{r}
+rowSums(is.na(genotype[,4:ncol(genotype)])) %>% #number of NAs for each SNP/row
+  as_tibble() %>% #convert to tibble
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(SNP = genotype$Marker) %>% #add col of SNP names
+  mutate(Percentage_NAs = Number_of_NAs/282*100) %>% #%NAs (/282 as 282 vars)
+  filter(Percentage_NAs >= 20) %>%
+  nrow() %>%
+  paste("SNPs have >=20% missing data")
+
+rowSums(is.na(genotype[,4:ncol(genotype)])) %>% #number of NAs for each SNP/row
+  as_tibble() %>% #convert to tibble
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(SNP = genotype$Marker) %>% #add col of SNP names
+  mutate(Percentage_NAs = Number_of_NAs/282*100) %>% #%NAs (/282 as 282 vars)
+  filter(Percentage_NAs < 20) %>%
+  nrow() %>%
+  paste("SNPs have <20% missing data and can be used for analysis")
+```
+
+We shall remove SNPs with >=20% missing data for subsequent analysis. 
+
+```{r}
+#filter to select data with <20% missing
+genotype_SNP_filtered <- genotype %>%
+  filter(rowSums(is.na(genotype[,4:ncol(genotype)]))/282*100 < 20)
+```
+
+We can also check missing data per cultivar (column) as follows. Note this is 
+done on the per SNP filtered data.
+
+```{r}
+p1 <- colSums(is.na(genotype_SNP_filtered[4:ncol(genotype_SNP_filtered)])) %>% #number of NAs per cultivar 
+  enframe() %>% #convert to tibble
+  rename(Cultivar = name) %>% #rename col 
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(Percentage_NAs = Number_of_NAs/nrow(genotype_SNP_filtered)*100) %>% #% NAs
+  ggplot(mapping = 
+           aes(x = Cultivar, y = Percentage_NAs, #plot vars vs % NA
+               label = Cultivar)) + #set up labels
+  geom_point() + #dotplot
+  geom_hline(yintercept = 20, col = "red", linewidth = 1) + #add threshold at 20% missing data
+  geom_label_repel(
+    aes(label=
+          ifelse(Percentage_NAs>20, Cultivar,'')), #label vars over 20% threshold 
+    box.padding = 1, #increase distance of box from point
+    point.padding = 1, #increase distance of connector from point
+    size = 12) + #adjust text size
+  scale_y_continuous(limits = c(0,50), breaks = seq(0,50,10)) + #adjust y-scale
+  ylab("Percentage (%) missing data") +
+  xlab("Cultivar")+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_blank(), #remove x-axis text to make clearer
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+p1
+
+#save plot
+ggsave(
+  filename = 
+    "GWAS_poly_output/missing_data_per_cultivar.pdf", 
+       plot = p1, device = pdf, width = 15, height = 10) 
+```
+
+We can see from the plot that there are 3 cultivars with >=20% missing
+data. These are Excalibur, Kifli, and Stirling.
+
+```{r}
+colSums(is.na(genotype_SNP_filtered[4:ncol(genotype_SNP_filtered)])) %>% #number of NAs per cultivar 
+  enframe() %>% #convert to tibble
+  rename(Cultivar = name) %>% #rename col 
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(Percentage_NAs = Number_of_NAs/nrow(genotype_SNP_filtered)*100) %>% #% NAs
+  filter(Percentage_NAs >= 20)
+```
+
+We shall remove these cultivars from both the genotype (which we have already 
+filtered to SNPs with < 20% missing data) and phenotype data. We shall save the
+results for subsequent analysis.
+
+```{r}
+genotype_SNP_cultivar_filtered <-
+  genotype_SNP_filtered %>%
+  select(-c("EXCALIBUR", "KIFLI", "STIRLING"))
+
+#save result
+write.csv(genotype_SNP_cultivar_filtered, 
+          file = "raw_data/genotype/sharma_genotype_GWAS_poly_missing_filtered.csv",
+          row.names = FALSE)
+```
+
+```{r}
+phenotype_cultivar_filtered <-
+  phenotype %>%
+  filter(ID != "STIRLING") %>%
+  filter(ID != "KIFLI") %>%
+  filter(ID != "EXCALIBUR")
+
+#save result
+write.csv(phenotype_cultivar_filtered, 
+          file = "BLUEs_output/BLUEs_with_Q_matrices_and_PCs_cultivar_filtered.csv",
+          row.names = FALSE)
+```
+
+Overall after filtering for missing data we have.
+
+```{r}
+paste(nrow(genotype_SNP_cultivar_filtered), "SNPs")
+paste(ncol(genotype_SNP_cultivar_filtered[4:ncol(genotype_SNP_cultivar_filtered)]), "Cultivars")
+```
+
+# MAF filtering
+
+Another important filtering step is to filter based on minor
+allele frequency (MAF). Generally a threshold of MAF >5% is used.
+This is because "SNPs with a low MAF are rare, therefore power is lacking for detecting SNP‐phenotype associations. These SNPs are also more prone to genotyping errors" (Marees et al., 2018).
+
+First calculate the total number of alleles (4x the number of individuals as
+potato is tetraploid).
+
+```{r}
+total_alleles <- 4 * ncol(genotype_SNP_cultivar_filtered[4:282])
+```
+
+Calculate frequency of B allele. This is just the sum of each col (marker)
+for the initial gene dosage divided by total alleles.
+
+```{r}
+freq_B_allele <- genotype_SNP_cultivar_filtered[4:282] %>% #select only SNP dosages
+  rowSums(na.rm = TRUE)/total_alleles
+```
+
+Calculate frequency of A allele. Again sum of each col (marker)
+divided by total alleles. But this time to convert to A allele dosages
+need to do 4 - initial gene dosage i.e. AAAB = 1 B or 4-1 = 3 A.
+
+```{r}
+freq_A_allele <- (4 - genotype_SNP_cultivar_filtered[4:282]) %>% #note need brackets else doesnt work
+  rowSums(na.rm = TRUE)/total_alleles
+```
+
+We can get the minor allele frequency (MAF) by taking parallel minima for each
+pair of samples in the two vectors for A and B allele frequency.
+
+```{r}
+maf <- pmin(freq_A_allele, freq_B_allele)
+```
+
+We shall plot this as below.
+
+```{r}
+p1 <- maf %>%
+  as_tibble() %>% #convert to tibble
+  rename(MAF = value) %>% #rename col
+  ggplot(aes(x = MAF)) +
+  geom_histogram(binwidth = 0.01, col = "black", 
+                 fill = "lightgrey")+ #plot histogram of MAF
+  xlab("Minor Allele Frequency (MAF)") +
+  ylab("SNP Count")+
+  geom_vline(xintercept = 0.05, col = "red", lty = "dashed", 
+             linewidth = 2) + #add filtering threshold
+  scale_y_continuous(limits = c(0,200), breaks = seq(0,200,50))+ #y-axis scale
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+#save plot
+ggsave(
+  filename = 
+    "GWAS_poly_output/minor_allele_frequency.pdf", 
+       plot = p1, device = pdf, width = 15, height = 10) 
+```
+We shall filter the data based on a threshold of MAF >0.05 (5%)
+
+```{r}
+maf %>%
+  as_tibble() %>%
+  mutate(SNP = genotype_SNP_cultivar_filtered$Marker) %>%
+  filter(value <0.05) %>%
+  nrow() %>%
+  paste("SNPs have an MAF <5% and will be excluded from analysis")
+
+maf %>%
+  as_tibble() %>%
+  mutate(SNP = genotype_SNP_cultivar_filtered$Marker) %>%
+  filter(value >=0.05) %>%
+  nrow() %>%
+  paste("SNPs have an MAF >=5% and can be used for analysis")
+
+maf_filter_SNPs <- maf %>%
+  as_tibble() %>%
+  mutate(SNP = genotype_SNP_cultivar_filtered$Marker) %>%
+  filter(value >=0.05) %>%
+  pull(SNP)
+
+genotype_maf_filtered <- genotype_SNP_cultivar_filtered %>%
+  filter(Marker %in% maf_filter_SNPs)
+
+#save result
+write.csv(genotype_maf_filtered, 
+          file = "raw_data/genotype/sharma_genotype_GWAS_poly_maf_filtered.csv",
+          row.names = FALSE)
+```
+
+# Set up GWAS
+
+The first step is to combine the phenotype and genotype data to create the 
+object containing the data for GWAS analysis.
+
+```{r}
+pheno = "BLUEs_output/BLUEs_with_Q_matrices_and_PCs_cultivar_filtered.csv"
+geno = "raw_data/genotype/sharma_genotype_GWAS_poly_maf_filtered.csv"
+
+#done using the read.GWASpoly() function
+GWAS_data <- read.GWASpoly(ploidy = 4, #tetraploid potato hence 4
+                      pheno.file = pheno, #BLUEs + PCs + Q matrices
+                      geno.file = geno, #SNPs
+                      format = "numeric", #load allele dosage data for variants
+                      n.traits = 5, #specifies the number of traits
+                      delim = ",")
+```
+
+# Parameters and Population structure
+
+### K-method + LOCO ....
+
+The default method to control population structure in GWASpoly is to use set.K 
+to implement the K-model which uses a random polygenic effect to control for 
+population structure. This is done by calculating a kinship matrix (K) for the
+population being studied.
+
+We shall also use the the leave-one-chromosome-out (LOCO) method
+to increase statistical power by accounting for proximal contamination.
+
+```{r}
+kinship_matrix <- set.K(GWAS_data,
+                 LOCO = TRUE, #use leave-one-chromosome-out
+                 n.core = 10) #use 10 cores for parallel computing
+```
+
+### Geno.freq
+
+Markers below a certain frequency have reduced detection power for rare variants
+(mostly due to linkage disequilibrium). Thus is makes sense to remove these 
+variants to improve statistical power.
+
+You can use minor allele frequency (MAF) for this BUT the authors of GWAS poly
+state that for heterozygous panels (especially when dominance models are used) 
+max genotype frequency is a better criterion.
+
+Based on power calculations, the optimal threshold (according to the authors) is
+1 - 5/N for the maximum geno.freq. Below this threshold markers increase the
+detection threshold for multiple testing unnecessarily thanks to their low
+statistical power.
+
+We can set this for the K-model as below.
+
+```{r}
+#set population size
+N <- length(GWAS_data@geno[,1])
+
+#set K-model geno.freq
+K_params <- set.params(geno.freq = 1 - 5/N) #recommended based on power calcs
+```
+
+GWASpoly also provides a couple of other methods to control for population
+structure...
+
+- The P+K method = uses principal components (P, generally derived from PCA)
+along with the kinship matrix (K) to better control for population structure.
+- The Q+K method = uses a population structure matrix (Q) derived from 
+population clustering techniques (e.g. STRUCTURE) as covariates along with the 
+kinship matrix (K) to better control for population structure.
+
+Note these are created by adding PCs/covariates (P/Q) as additional parameters 
+to the default K-model. We can set up the P+K and Q+K models as below. As before 
+we shall also set max geno.freq to 1 - 5/N.
+
+## PK-method
+
+For this method we shall use the PCs derived from PCA + the kinship matrix (K)
+from before.
+
+```{r}
+#set population size
+N <- length(GWAS_data@geno[,1])
+
+#set geno.freq threshold + PCs
+PK_params <- set.params(geno.freq = 1 - 5/N,
+                        fixed = c("PC1", "PC2", "PC3", "PC4", "PC5"),
+                        fixed.type = rep("numeric",5))
+```
+
+
+### QK-method
+
+For this method we shall compare the two different Q matrices generated by 
+STRUCTURE and DAPC analysis.
+
+- First we can set the Q-matrix from STRUCTURE
+
+```{r}
+#set population size
+N <- length(GWAS_data@geno[,1])
+
+#set thresholds
+QK_structure_params <- 
+  set.params(geno.freq = 1 - 5/N,
+             fixed = c("STRUCTURE_K1", "STRUCTURE_K2", "STRUCTURE_K3"),
+             fixed.type = c("numeric","numeric","numeric")) 
+```
+
+- Next we can set the Q_matrix from DAPC
+
+```{r}
+#set population size
+N <- length(GWAS_data@geno[,1])
+
+#set thresholds
+QK_dapc_params <- 
+  set.params(geno.freq = 1 - 5/N,
+             fixed = c("DAPC_cluster_1", "DAPC_cluster_2", "DAPC_cluster_3", "DAPC_cluster_4"),
+             fixed.type = rep("numeric", 4)) 
+```
+
+# Genetic models
+
+There are various models you can test for significance in GWAS poly...
+
+- General:
+    - No constraints on dosage effects.
+- Diplo-general:
+    - All heterozygotes have same effect.
+    - Similar to Diplo-additive but not constrained to being halfway between 
+    homozygotes
+- Additive:
+    - Each additional copy of the alternate allele adds the same amount to the
+    observed phenotype. I.e. the effect of the SNP is proportional to the number
+    of copies.
+- Diplo-additive:
+    - The heterozyogtes (AAAB, AABB, ABBB) are all exactly halfway between the 
+    two homozygotes (AAAA, BBBB).
+- 1-dom (simplex dominant):
+    - Complete dominance i.e. only need one dominant allele to alter phenotype.
+    - Does both 1-dom-ref (reference allele is dominant) and 1-dom-alt
+      (alternate allele is dominant).
+- 2-dom (duplex dominant):
+    - Need two dominant alleles to alter phenotype.
+    - Does both 2-dom-ref (reference allele is dominant) and 2-dom-alt
+      (alternate allele is dominant).
+    
+Note if you test more models you need to adjust thresholds to 
+compensate for type I error.
+
+# GWAS K-model 
+
+Here we perform the main GWAS analysis using the K-model. Have done this for all
+traits but only the additive, 1-dom, and 2-dom models.
+
+```{r}
+GWAS_k_method <- 
+  GWASpoly(kinship_matrix,
+           models=c("additive",
+                    "1-dom",
+                    "2-dom"),
+           traits=c("yield_kg",
+                    "Max_Max_height_m",
+                    "Max_Ave_height_m",
+                    "Max_area_plant_m2",
+                    "Max_volume_plant_m3"),
+           params=K_params,
+           n.core=10)
+```
+
+## QQ-plots
+
+We can assess the resulting model for our data using QQ-plots.
+
+This plots observed vs expected -log10(p) values under null. This should follow
+a uniform distribution (shown by dotted line), the closer the line is to uniform
+the better the model.
+
+For clearer plotting have edited the original function from GWASpoly to allow
+different shapes for each model.
+
+```{r}
+qq.plot_edit <- function(data,trait,models=NULL) {
+	stopifnot(inherits(data,"GWASpoly.fitted"))
+  stopifnot(is.element(trait,names(data@scores)))
+
+  all.models <- colnames(data@scores[[trait]])
+  if (is.null(models)) {
+    models <- all.models
+  } else {
+    dom.models <- models[grep("dom",models,fixed=T)]
+    models <- setdiff(models,dom.models)
+    if (length(dom.models)>0) {
+      dom.models <- unlist(lapply(as.list(dom.models),
+                                  function(x){
+                                    all.models[grep(x,all.models,fixed=T)]}))
+    }
+    models <- union(models,dom.models)
+    stopifnot(all(is.element(models,all.models)))
+  }
+
+	scores <- as.data.frame(data@scores[[trait]][,models])
+	colnames(scores) <- models
+  scores$Chrom <- data@map$Chrom
+	tmp <- pivot_longer(data=scores,cols=1:length(models),
+	                    names_to="model",values_to="y",values_drop_na=TRUE)
+  tmp <- as.data.frame(tmp)
+  tmp$model <- factor(tmp$model,levels=models,ordered=T)
+  tmp <- tmp[order(tmp$model,tmp$Chrom,tmp$y,decreasing = c(FALSE,FALSE,TRUE)),]
+  tmp2 <- tapply(tmp$y,list(tmp$Chrom,tmp$model),function(x) {
+    n <- length(x)
+    unif.p <- -log10(ppoints(n))
+	  })
+  tmp$x <- unlist(tmp2)
+	 
+  p <- ggplot(data=tmp,aes(x=.data$x,
+                           y=.data$y,
+                           colour=.data$model,
+                           shape=.data$model)) + #have added shape=.data$model
+    facet_wrap(~Chrom) + 
+    geom_point(size = 4) + #larger points
+    theme_bw() + 
+    xlab(expression(paste("Expected -log"[10],"(p)",sep=""))) + 
+    ylab(expression(paste("Observed -log"[10],"(p)",sep=""))) + 
+    scale_colour_brewer(palette="Set1") + 
+    geom_abline(slope=1,intercept=0,linetype=2, linewidth=3) + #thicker line
+    theme(text = element_text(size=15))
+  return(p)	  
+}
+```
+
+### yield_kg
+
+```{r}
+p1 <- qq.plot_edit(GWAS_k_method, trait = "yield_kg")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/K_method/QQ_k_method_yield_kg.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Max_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_k_method, trait = "Max_Max_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/K_method/QQ_k_method_Max_Max_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Ave_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_k_method, trait = "Max_Ave_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/K_method/QQ_k_method_Max_Ave_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_area_plant_m2
+
+```{r}
+p1 <- qq.plot_edit(GWAS_k_method, trait = "Max_area_plant_m2")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/K_method/QQ_k_method_Max_area_plant_m2.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_volume_plant_m3
+
+```{r}
+p1 <- qq.plot_edit(GWAS_k_method, trait = "Max_volume_plant_m3")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/K_method/QQ_k_method_Max_volume_plant_m3.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+## Multiple correction
+
+Multiple correction can be used to control genome wide false-positives/type
+I error. set.threshold() allows us to choose a significance threshold for
+multiple correction.
+
+We can use the bonferroni correction which divides the p-values
+by the total number of markers.
+
+```{r}
+GWAS_k_method_bonferroni <- 
+  set.threshold(GWAS_k_method,
+                method="Bonferroni",
+                level=0.05)
+```
+
+However, the bonferroni correction may be too conservative as it assumes 
+complete independence but LD means some markers are not independent. Thus we can 
+use an estimate an effective number of markers instead.
+
+```{r}
+GWAS_k_method_m.eff <- 
+  set.threshold(GWAS_k_method,
+                method="M.eff",
+                level=0.05)
+```
+
+## Manhattan plots 
+
+Visualises the distribution of -log10(p) values along the genome.
+
+For the plots I will set up some labels for the different traits so that
+they are nicely formatted (e.g. supercript for metres squared) on the final graphs.
+
+```{r}
+#set_up trait labels for manhattan plots
+trait_labels <- c("yield_kg" = "Yield~(kg)",
+                  "Max_Max_height_m" = "Max~height~(m)",
+                  "Max_Ave_height_m" = "Mean~height~(m)",
+                  "Max_area_plant_m2" = "Max~canopy~area~(m^2)",
+                  "Max_volume_plant_m3" = "Max~canopy~volume~(m^3)")
+```
+
+To include these custom labels I have edited the original manhattan.plot
+function from GWAS poly
+
+```{r}
+#' Create Manhattan plot
+#' 
+#' Create Manhattan plot
+#' 
+#' Results for the ref and alt versions of the dominance model are combined. If \code{data} is the output from \code{\link{set.threshold}}, then the threshold is displayed as a horizontal dashed line when \code{models} contains a single model. Because the threshold varies between models, it is not drawn when multiple models are included. Although the ref and alt versions of each dominance model are slightly different (as seen with \code{\link{qq.plot}}), they are treated as a single model for the Manhattan plot, and the average threshold is shown.
+#' 
+#' @param data Variable of class \code{GWASpoly.fitted}
+#' @param traits Vector of trait names (by default, all traits plotted)
+#' @param models Vector of model names (by default, all models plotted)
+#' @param chrom optional, to plot only one chromosome
+#' 
+#' @return ggplot2 object
+#' 
+#' @export
+#' @import ggplot2
+#' @importFrom tidyr pivot_longer
+#' @importFrom rlang .data
+
+#added this else edit doesnt work
+get_x <- function(map) {
+  #takes a map with chrom and position and returns x axis values for plotting multiple chromosomes
+  a <- tapply(map[,2],map[,1],max)
+  n <- length(a)
+  m <- tapply(map[,2],map[,1],length)
+  b <- c(0,apply(array(1:(n-1)),1,function(k){sum(a[1:k])}))
+  x <- map[,2] + rep(b,times=m)
+  return(x)
+}
+
+manhattan.plot_edit <- function(data,traits=NULL,
+                                models=NULL,
+                                chrom=NULL,
+                                trait_labels=NULL) { #EDIT = ADDED OPTION TO SPECIFY LABELS
+  
+  stopifnot(inherits(data,"GWASpoly.fitted"))
+  if (is.null(traits)) {
+    traits <- names(data@scores)
+  } else {
+    stopifnot(all(is.element(traits,names(data@scores))))
+  }
+  n.trait <- length(traits)
+  all.models <- colnames(data@scores[[1]])
+  if (is.null(models)) {
+    models <- all.models
+  } else {
+    dom.models <- models[grep("dom",models,fixed=T)]
+    models <- setdiff(models,dom.models)
+    if (length(dom.models)>0) {
+      dom.models <- unlist(lapply(as.list(dom.models),function(x){all.models[grep(x,all.models,fixed=T)]}))
+    }
+    models <- union(models,dom.models)
+    stopifnot(all(is.element(models,all.models)))
+  }
+  
+  plotme <- thresh.data <- NULL
+  if (is.null(chrom)) {
+    x <- get_x(data@map[,2:3])
+    ix <- 1:nrow(data@map)
+  } else {
+    stopifnot(chrom %in% levels(data@map$Chrom))
+    ix <- which(as.character(data@map$Chrom)==chrom)
+    x <- data@map$Position[ix]/1e6
+  }
+  for (k in 1:n.trait) {
+    scores <- as.data.frame(data@scores[[traits[k]]][ix,models])
+    colnames(scores) <- models
+    scores$x <- x
+    scores$color <- factor(ifelse(as.integer(factor(data@map[ix,2]))%%2==1,1,0))
+    tmp <- pivot_longer(data=scores,cols=match(models,colnames(scores)),names_to="model",values_to="y",values_drop_na=TRUE)
+    tmp$trait <- traits[k]
+    if (inherits(data,"GWASpoly.thresh")) {
+      thresh.data <- rbind(thresh.data,data.frame(y=max(data@threshold[traits[k],models]),trait=traits[k]))
+    }
+    plotme <- rbind(plotme,tmp)
+  }
+  plotme$trait <- factor(plotme$trait)
+  plotme$model <- gsub(pattern="-ref",replacement="",x=plotme$model)
+  plotme$model <- gsub(pattern="-alt",replacement="",x=plotme$model)
+  plotme$model <- factor(plotme$model)
+  
+  ### EDIT
+  # set up named vector of trait labels
+  if (is.null(trait_labels)) {
+    trait_labels <- setNames(traits, traits)  # Default: use trait names as labels
+  } else {
+    names(trait_labels) <- traits  # use trait_labels vector as labels
+  }
+  
+  p <- ggplot(data=plotme,aes(x=.data$x,y=.data$y,colour=.data$color,shape=.data$model)) +
+    ylab(expression(paste("-log"[10],"(p)"))) + guides(colour="none") + 
+    theme_bw() + theme(text = element_text(size=15),panel.grid = element_blank()) + 
+    geom_point() + 
+    scale_shape(solid=FALSE) + 
+    facet_wrap(~trait, labeller = as_labeller(trait_labels, label_parsed)) #EDIT = ADD TRAIT LABELS + ALLOWS SUPERSCRIPT
+  
+  if (is.null(chrom)) {
+    allchr <- unique(data@map[,2])
+    breaks <- (tapply(x,data@map[,2],max) + tapply(x,data@map[,2],min))/2
+    p <- p + scale_x_continuous(name="Chromosome",breaks=breaks,labels=allchr) +
+      scale_colour_manual(values=c("#21908c","#440154"))
+  } else {
+    p <- p + scale_x_continuous(name="Position (Mb)") + scale_colour_manual(values="#440154")
+  }
+  
+  if (inherits(data,"GWASpoly.thresh")) {
+    p <- p + geom_hline(data=thresh.data,mapping=aes(yintercept=.data$y),linetype=2,colour="grey50")
+  }
+  return(p)	
+}
+```
+
+
+### additive model
+
+In order to plot both the bonferroni and m.eff thresholds I have
+used the original GWAS data and then extracted the thresholds generated by 
+correction and added two horizontal lines to the graph. This is instead of
+directly plotting the correction data separately for each threshold.
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_k_method, 
+               traits = c("yield_kg",
+                          "Max_Max_height_m",
+                          "Max_Ave_height_m",
+                          "Max_area_plant_m2",
+                          "Max_volume_plant_m3"),
+               models = "additive",
+               trait_labels = trait_labels) + #see above
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 15)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add bonferroni threshold in red
+  geom_hline(yintercept = GWAS_k_method_bonferroni@threshold[,1],
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add m.eff threshold in blue
+  geom_hline(yintercept = GWAS_k_method_m.eff@threshold[,1],
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+        )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/K_method/manhattan_k_method_additive_model.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### 1-dom model
+
+As above in order to plot both the bonferroni and m.eff thresholds I have
+used the original GWAS data and then extracted the thresholds generated by 
+correction and added two horizontal lines to the graph. 
+
+However, note that in the help page for the manhattan.plot() function it says 
+“Although the ref and alt versions of each dominance model are slightly 
+different (as seen with qq.plot), they are treated as a single model for the 
+Manhattan plot, and the average threshold is shown”. However, looking at the 
+source code for the function it appears that the maximum, not mean, is used.
+This is based on the line in the code here...
+
+thresh.data <- rbind(thresh.data, 
+data.frame(y = max(data@threshold[traits[k], models]), trait = traits[k]))
+
+Having done some playing around with the manhattan.plot() and get.qlt() 
+functions this is the approach I will use as it seems to better match the final 
+results of get.qtl and provides a more conservative significance estimate.
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_k_method, 
+               traits = c("yield_kg",
+                          "Max_Max_height_m",
+                          "Max_Ave_height_m",
+                          "Max_area_plant_m2",
+                          "Max_volume_plant_m3"),
+               models = c("1-dom"),
+               trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni 1-dom threshold in red
+  geom_hline(yintercept = max(GWAS_k_method_bonferroni@threshold[,2],
+                              GWAS_k_method_bonferroni@threshold[,3]),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff 1-dom threshold in blue
+  geom_hline(yintercept = max(GWAS_k_method_m.eff@threshold[,2],
+                              GWAS_k_method_m.eff@threshold[,3]),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+        )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/K_method/manhattan_k_method_1-dom_model.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20)
+```
+
+Looking at the manhattan plots for the 1-dom model there seems to be significant 
+qtl for Max_area_plant_m2 on chr01 and yield_kg on chr06. Will plot 
+these in more detail below.
+
+#### Max_area_plant_m2 
+
+```{r}
+#chr01
+p1 <- manhattan.plot(GWAS_k_method, 
+               traits = c("Max_area_plant_m2"),
+               models = "1-dom",
+               chrom = "chr01") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+
+  #add max bonferroni 1-dom threshold in red
+  geom_hline(yintercept = max(GWAS_k_method_bonferroni@threshold[,2],
+                              GWAS_k_method_bonferroni@threshold[,3]),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff 1-dom threshold in blue
+  geom_hline(yintercept = max(GWAS_k_method_m.eff@threshold[,2],
+                              GWAS_k_method_m.eff@threshold[,3]),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+
+  #add title
+  ggtitle("chr01")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+        )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/K_method/manhattan_k_method_1-dom_model_max_area_plant_m2_chr01.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20)
+```
+
+#### yield_kg
+```{r}
+#chr06
+p1 <- manhattan.plot(GWAS_k_method, 
+               traits = c("yield_kg"),
+               models = "1-dom",
+               chrom = "chr06") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#440154")+
+
+  #add max bonferroni 1-dom threshold in red
+  geom_hline(yintercept = max(GWAS_k_method_bonferroni@threshold[,2],
+                              GWAS_k_method_bonferroni@threshold[,3]),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff 1-dom threshold in blue
+  geom_hline(yintercept = max(GWAS_k_method_m.eff@threshold[,2],
+                              GWAS_k_method_m.eff@threshold[,3]),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr06")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+        )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/K_method/manhattan_k_method_1-dom_model_yield_kg_chr06.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20)
+
+```
+
+### 2-dom model
+
+Again, note that in the help page for the manhattan.plot() function it says 
+“Although the ref and alt versions of each dominance model are slightly 
+different (as seen with qq.plot), they are treated as a single model for the 
+Manhattan plot, and the average threshold is shown”. However, looking at the 
+source code for the function it appears that the maximum, not mean, is used.
+This is based on the line in the code here...
+
+thresh.data <- rbind(thresh.data, 
+data.frame(y = max(data@threshold[traits[k], models]), trait = traits[k]))
+
+Having done some playing around with the manhattan.plot() and get.qlt() 
+functions this is the approach I will use as it seems to better match the final 
+results of get.qtl and provides a more conservative significance estimate.
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_k_method, 
+               traits = c("yield_kg",
+                          "Max_Max_height_m",
+                          "Max_Ave_height_m",
+                          "Max_area_plant_m2",
+                          "Max_volume_plant_m3"),
+               models = "2-dom",
+               trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni 1-dom threshold in red
+  geom_hline(yintercept = max(GWAS_k_method_bonferroni@threshold[,4],
+                              GWAS_k_method_bonferroni@threshold[,5]),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff 1-dom threshold in blue
+  geom_hline(yintercept = max(GWAS_k_method_m.eff@threshold[,4],
+                              GWAS_k_method_m.eff@threshold[,5]),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+        )
+
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/K_method/manhattan_k_method_2-dom_model.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20)
+```
+
+Looking at the manhattan plots for the 2-dom model there seems to be significant 
+qtl for yield_kg on chr07. Will plot this in more detail below.
+
+#### yield_kg
+
+```{r}
+#chr07
+p1 <- manhattan.plot(GWAS_k_method, 
+               traits = c("yield_kg"),
+               models = "2-dom",
+               chrom = "chr07") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+
+  #add max bonferroni 1-dom threshold in red
+  geom_hline(yintercept = max(GWAS_k_method_bonferroni@threshold[,4],
+                              GWAS_k_method_bonferroni@threshold[,5]),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff 1-dom threshold in blue
+  geom_hline(yintercept = max(GWAS_k_method_m.eff@threshold[,4],
+                              GWAS_k_method_m.eff@threshold[,5]),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr07")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+        )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/K_method/manhattan_k_method_2-dom_model_yield_kg_chr07.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20)
+```
+
+## Select significant QTL
+
+Based on the manhattan plots... 
+
+- The k-method and 1-dom model found significant qtl for Max_area_plant_m2 on 
+chr01 and yield_kg on chr06 and chr09.
+- The k-method and 2-dom model found significant qtl for yield_kg on chr07.
+
+We can extract these as below.
+
+### Check LD
+
+Before we can extract significant QTL it is worth checking LD. This is because 
+it can help in selecting a single marker per QTL.
+
+```{r, message=FALSE, warning=FALSE}
+p1 <- LD.plot(GWAS_k_method, max.loci=NULL)+ #max.loci=NULL uses all loci for LD calc
+  xlim(0,30)+ #note this remove data but only need to see plateau so fine
+  geom_vline(xintercept = 10, col = "red", lty = "dashed", size = 2)+ #threshold
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+p1
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/K_method/LD_plot_k_method.pdf", 
+       plot = p1, device = pdf, width = 20, height = 20)
+```
+
+Due to the large number of haplotypes in elite potato germplasm, and because 
+many of the potato SNP array markers are not haplotype-specific, the LD is quite 
+low even at zero distance (Vos et al. 2017). 
+
+However, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+
+### get.qtl
+
+We can extract the QTL as follows. Since we have both the Bonferroni and 
+M.eff thresholds have extracted the data for both.
+
+#### bonferroni
+
+```{r}
+qtl <- get.QTL(data=GWAS_k_method_bonferroni,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/K_method/k_method_qtl_bonferroni.csv")
+```
+
+#### m.eff
+
+```{r}
+qtl <- get.QTL(data=GWAS_k_method_m.eff,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/K_method/k_method_qtl_meff.csv")
+```
+
+## λGC
+
+λGC or genomic control inflation factor to check effects of population structure 
+on final GWAS model. Thus we shall use this measure to assess the effectiveness 
+of the K-model at controlling for population structure effects.
+
+First we shall create a function to calculate λGC for all traits and models
+and store the final results in a tibble. Will add the option to plot QQ plots
+of the chi-square values used to calculate λGC
+
+```{r}
+#note this function is at least partially based on GenABEL::estlambda() and
+#gap::gc.lambda() for λGC calculation and snpStats::qq.chisq() and 
+#heplots::cqplot() for QQ plot
+
+#GWASpoly.fitted = results of GWASpoly() function
+#traits = phenotypic traits of interest
+#models = genetic models, any of those used in GWASpoly() e.g., additive, X-dom
+#qqplot = logical, whether or not to plot qqplots for chisq
+#output_folder = folder to store qq_plots
+
+lambda_GC <- function(GWASpoly.fitted, 
+                      traits, 
+                      models, 
+                      qqplot = FALSE,
+                      output_folder){
+  
+  ### Prepare models ####
+  
+  n.models <- length(models) #count number of genetic models
+  
+  dom.models <- grep("dom",models,fixed = T) #find dom models
+  
+  #if dom models present add ref and alt codes
+  if(length(dom.models)>0){
+    
+    dom.models2 <- sort(c(paste(models[dom.models],"ref",sep="-"),
+                          paste(models[dom.models],"alt",sep="-")))
+    
+  } else{dom.models2 <- character(0)} #if no dom models
+  
+  other.models <- setdiff(1:n.models,dom.models) #find other models i.e. not dom 
+  
+  all_models <- c(models[other.models],dom.models2) #store all models including dom
+  
+  ###############################################
+  
+  #initialise list to store lambda_GC_values
+  lambda_GC_data <- list()
+  
+  #initialise list to store qqplots
+  if(qqplot == TRUE){
+    lambda_GC_qq_plots <- list()
+  }
+  
+  #loop through traits and genetic models
+  for(i in traits){
+    for(j in all_models){
+      
+      ### Calculate Lambda GC ####
+      
+      #extract scores/-log10(P)
+      scores <- GWASpoly.fitted@scores[[i]][[j]]
+      
+      #remove potential missing values
+      scores <- na.omit(scores)
+      
+      # Convert scores/-log10(P) to p-values
+      pvals <- scores %>%
+        as_tibble() %>%
+        mutate(pvals = 10 ^ (-1 * value)) %>%
+        pull(pvals)
+      
+      #calculate chi-squared for p-values with 1 degree of freedom
+      chisq <- qchisq(pvals, df = 1, lower.tail = FALSE)
+      
+      #Compute lambda GC
+      lambda_GC_value <- median(chisq)/qchisq(0.5, df = 1)
+      
+      #Store lambda GC values with descriptive names in list
+      lambda_GC_data <- append(lambda_GC_data,
+                               list(tibble(trait = i,
+                                           model = j,
+                                           lambda_GC_value = lambda_GC_value)))
+      
+      ### Plot Lambda GC ####
+      
+      if(qqplot == TRUE){
+        
+        observed <- sort(chisq) #observed values = chisq in ascending order
+        
+        N <- length(observed) #count number of observed values
+        
+        #plot chisq qqplot
+        lambda_GC_qq_plots[[i]][[j]] <- 
+          #convert observed values to data frame
+          as.data.frame(observed) %>% 
+          #calculate expected values using ppoints at 1 degree of freedom
+          mutate(expected = qchisq(ppoints(N), df=1)) %>% 
+          #plot scatter plot of observed vs expected values
+          ggplot(mapping = aes(x = expected, y = observed)) +
+          geom_point() +
+          
+          #add reference line to assess QQ plot
+          geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+          
+          #adjust labels
+          labs(x = expression("Expected"~chi^2),
+               y = expression("Observed"~chi^2),
+               title = paste(i," ", j, "model")) +
+          
+          theme(panel.grid.major = element_blank(), #remove major grid lines
+                panel.grid.minor = element_blank(), #remove minor grid lines
+                axis.line = element_line(), #add lines to axes
+                axis.text.x = element_text(size = 40), #larger x axis text
+                axis.title.x = element_text(size = 40), #larger x axis title
+                axis.text.y = element_text(size = 40), #larger y axis text
+                axis.title.y = element_text(size = 40), #larger y axis title
+                title = element_text(size = 40) #larger plot title
+                )
+        
+        #create out folder if not made
+        dir.create (output_folder, recursive = TRUE, showWarnings = FALSE) 
+        
+        #save graphs
+        ggsave(filename = paste0(output_folder, i, "_", j, "_chisq_qq_plot.pdf"),
+               plot = lambda_GC_qq_plots[[i]][[j]],
+               width = 15,
+               height = 10)
+        
+      }
+      
+    }
+  }
+  
+  ########################## 
+  
+  ### Save and return final results table ####
+  
+  # Convert list to a tibble
+  lambda_GC_tibble <- bind_rows(lambda_GC_data) %>%
+    pivot_wider(names_from = model, values_from = lambda_GC_value)
+  
+  #extract GWAS object name for file name
+  method <- deparse(substitute(GWASpoly.fitted))
+  
+  # save tibble to file in output folder
+  write.csv(lambda_GC_tibble, file = paste0(output_folder,"lambda_GC_", method, ".csv"))
+  
+  #return final tibble to environment
+  return(lambda_GC_tibble)
+  
+}
+```
+
+Now we can use the function above to calculate λGC values for the K-method.
+
+```{r}
+lambda_GC_k_method <- lambda_GC(
+  GWASpoly.fitted = GWAS_k_method, 
+  models=c("additive",
+           "1-dom",
+           "2-dom"),
+  traits=c("yield_kg",
+           "Max_Max_height_m",
+           "Max_Ave_height_m",
+           "Max_area_plant_m2",
+           "Max_volume_plant_m3"),
+  qqplot = TRUE,
+  output_folder = "GWAS_poly_output/K_method/lambda_GC/")
+
+knitr::kable(lambda_GC_k_method)
+```
+
+# GWAS P+K model
+
+```{r}
+GWAS_pk_method <- 
+  GWASpoly(kinship_matrix,
+           models=c("additive",
+                    "1-dom",
+                    "2-dom"),
+           traits=c("yield_kg",
+                    "Max_Max_height_m",
+                    "Max_Ave_height_m",
+                    "Max_area_plant_m2",
+                    "Max_volume_plant_m3"),
+           params=PK_params,
+           n.core=10)
+```
+
+## QQ-plots
+
+### yield_kg
+
+```{r}
+p1 <- qq.plot_edit(GWAS_pk_method, trait = "yield_kg")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/PK_method/QQ_pk_method_yield_kg.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Max_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_pk_method, trait = "Max_Max_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/PK_method/QQ_pk_method_Max_Max_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Ave_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_pk_method, trait = "Max_Ave_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/PK_method/QQ_pk_method_Max_Ave_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_area_plant_m2
+
+```{r}
+p1 <- qq.plot_edit(GWAS_pk_method, trait = "Max_area_plant_m2")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/PK_method/QQ_pk_method_Max_area_plant_m2.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_volume_plant_m3
+
+```{r}
+p1 <- qq.plot_edit(GWAS_pk_method, trait = "Max_volume_plant_m3")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/PK_method/QQ_pk_method_Max_volume_plant_m3.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+## Multiple correction
+
+Bonferroni correction
+
+```{r}
+GWAS_pk_method_bonferroni <- 
+  set.threshold(GWAS_pk_method,
+                method="Bonferroni",
+                level=0.05)
+```
+
+m.eff correction
+
+```{r}
+GWAS_pk_method_m.eff <- 
+  set.threshold(GWAS_pk_method,
+                method="M.eff",
+                level=0.05)
+```
+
+## Manhattan plots 
+
+Visualises the distribution of -log10(p) values along the genome.
+
+### additive model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_pk_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "additive",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 15)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add bonferroni threshold in red
+  geom_hline(yintercept = GWAS_pk_method_bonferroni@threshold[,1],
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add m.eff threshold in blue
+  geom_hline(yintercept = GWAS_pk_method_m.eff@threshold[,1],
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/PK_method/manhattan_pk_method_additive_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### 1-dom model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_pk_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "1-dom",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_pk_method_bonferroni@threshold[,2],
+                                GWAS_pk_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_pk_method_m.eff@threshold[,2],
+                                GWAS_pk_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/PK_method/manhattan_pk_method_1-dom_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+As with the basic K-model, looking at the manhattan plots for the 1-dom model 
+there seems to be significant qtl for Max_area_plant_m2 on chr01 and 
+yield_kg on chr06. Will plot these in more detail below.
+
+#### Max_area_plant_m2 
+
+```{r}
+#chr01
+p1 <- manhattan.plot(GWAS_pk_method, 
+                     traits = c("Max_area_plant_m2"),
+                     models = "1-dom",
+                     chrom = "chr01") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_pk_method_bonferroni@threshold[,2],
+                                GWAS_pk_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_pk_method_m.eff@threshold[,2],
+                                GWAS_pk_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr01")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/PK_method/manhattan_pk_method_1-dom_model_max_area_plant_m2_chr01.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+#### yield_kg
+```{r}
+#chr06
+p1 <- manhattan.plot(GWAS_pk_method, 
+                     traits = c("yield_kg"),
+                     models = "1-dom",
+                     chrom = "chr06") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#440154")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_pk_method_bonferroni@threshold[,2],
+                                GWAS_pk_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_pk_method_m.eff@threshold[,2],
+                                GWAS_pk_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr06")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/PK_method/manhattan_pk_method_1-dom_model_yield_kg_chr06.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+
+```
+
+### 2-dom model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_pk_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "2-dom",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_pk_method_bonferroni@threshold[,4],
+                                GWAS_pk_method_bonferroni@threshold[,5])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_pk_method_m.eff@threshold[,4],
+                                GWAS_pk_method_m.eff@threshold[,5])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/PK_method/manhattan_pk_method_2-dom_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+As with the basic K-method, looking at the manhattan plots for the 2-dom model 
+there seems to be significant qtl for yield_kg on chr07. 
+Will plot this in more detail below.
+
+#### yield_kg
+
+```{r}
+#chr07
+p1 <- manhattan.plot(GWAS_pk_method, 
+                     traits = c("yield_kg"),
+                     models = "2-dom",
+                     chrom = "chr07") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_pk_method_bonferroni@threshold[,4],
+                                GWAS_pk_method_bonferroni@threshold[,5])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_pk_method_m.eff@threshold[,4],
+                                GWAS_pk_method_m.eff@threshold[,5])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr07")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/PK_method/manhattan_pk_method_2-dom_model_yield_kg-chr07.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+## Select significant QTL
+
+Based on the manhattan plots... 
+
+- The pk-method and 1-dom model found significant qtl for Max_area_plant_m2 on 
+chr01 and yield_kg on chr06
+- The pk-method and 2-dom model found significant qtl for yield_kg on chr07.
+
+We can extract these as below.
+
+### Check LD
+
+Before we can extract significant QTL it is worth double checking LD. 
+This should be almost identical to above for K-method but will double check.
+
+```{r, message=FALSE, warning=FALSE}
+p1 <- LD.plot(GWAS_pk_method, max.loci=NULL)+ #max.loci=NULL uses all loci for LD calc
+  xlim(0,30)+ #note this remove data but only need to see plateau so fine
+  geom_vline(xintercept = 10, col = "red", lty = "dashed", size = 2)+ #threshold
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line()
+  )
+
+p1
+
+# ggsave(
+#   filename = 
+#     "GWAS_poly_output/K_method/LD_plot_k_method.pdf", 
+#        plot = p1, device = pdf, width = 20, height = 20)
+```
+
+As before, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+
+### get.qtl
+
+We can extract the QTL as follows. Since we have both the Bonferroni and 
+M.eff thresholds have extracted the data for both.
+
+#### bonferroni
+
+```{r}
+qtl <- get.QTL(data=GWAS_pk_method_bonferroni,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/PK_method/pk_method_qtl_bonferroni.csv")
+```
+
+#### m.eff
+
+```{r}
+qtl <- get.QTL(data=GWAS_pk_method_m.eff,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/PK_method/pk_method_qtl_meff.csv")
+```
+
+Note how we we have one more significant qtl for yield with the m.eff threshold 
+compared to the K-model. Also note that this does not appear significant on the
+Manhattan plot but this is because the max threshold for the two 1-dom models 
+is used.
+
+## λGC
+
+Calculate λGC values for the PK-method.
+
+```{r}
+lambda_GC_pk_method <- lambda_GC(
+  GWASpoly.fitted = GWAS_pk_method, 
+  models=c("additive",
+           "1-dom",
+           "2-dom"),
+  traits=c("yield_kg",
+           "Max_Max_height_m",
+           "Max_Ave_height_m",
+           "Max_area_plant_m2",
+           "Max_volume_plant_m3"),
+  qqplot = TRUE,
+  output_folder = "GWAS_poly_output/PK_method/lambda_GC/")
+
+knitr::kable(lambda_GC_pk_method)
+```
+
+# GWAS DAPC Q+K model
+
+```{r}
+GWAS_qk_dapc_method <- 
+  GWASpoly(kinship_matrix,
+           models=c("additive",
+                    "1-dom",
+                    "2-dom"),
+           traits=c("yield_kg",
+                    "Max_Max_height_m",
+                    "Max_Ave_height_m",
+                    "Max_area_plant_m2",
+                    "Max_volume_plant_m3"),
+           params=QK_dapc_params,
+           n.core=10)
+```
+
+## QQ-plots
+
+### yield_kg
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_dapc_method, trait = "yield_kg")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_DAPC_method/QQ_qk_dapc_method_yield_kg.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Max_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_dapc_method, trait = "Max_Max_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_DAPC_method/QQ_qk_dapc_method_Max_Max_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Ave_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_dapc_method, trait = "Max_Ave_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_DAPC_method/QQ_qk_dapc_method_Max_Ave_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_area_plant_m2
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_dapc_method, trait = "Max_area_plant_m2")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_DAPC_method/QQ_qk_dapc_method_Max_area_plant_m2.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_volume_plant_m3
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_dapc_method, trait = "Max_volume_plant_m3")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_DAPC_method/QQ_qk_dapc_method_Max_volume_plant_m3.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+## Multiple correction
+
+Bonferroni correction
+
+```{r}
+GWAS_qk_dapc_method_bonferroni <- 
+  set.threshold(GWAS_qk_dapc_method,
+                method="Bonferroni",
+                level=0.05)
+```
+
+m.eff correction
+
+```{r}
+GWAS_qk_dapc_method_m.eff <- 
+  set.threshold(GWAS_qk_dapc_method,
+                method="M.eff",
+                level=0.05)
+```
+
+## Manhattan plots 
+
+Visualises the distribution of -log10(p) values along the genome.
+
+### additive model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_qk_dapc_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "additive",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 15)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add bonferroni threshold in red
+  geom_hline(yintercept = GWAS_qk_dapc_method_bonferroni@threshold[,1],
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add m.eff threshold in blue
+  geom_hline(yintercept = GWAS_qk_dapc_method_m.eff@threshold[,1],
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_DAPC_method/manhattan_qk_dapc_method_additive_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### 1-dom model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_qk_dapc_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "1-dom",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_bonferroni@threshold[,2],
+                                GWAS_qk_dapc_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_m.eff@threshold[,2],
+                                GWAS_qk_dapc_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_DAPC_method/manhattan_qk_dapc_method_1-dom_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+Like the basic K-model, looking at the manhattan plots for the 
+1-dom model with the QK DACP method there seems to be significant qtl for...
+
+- Max_area_plant_m2 on chr01
+- yield_kg on chr06.
+
+There is also an additional qtl for yield_kg on chr09
+
+Will plot these in more detail below
+
+#### Max_area_plant_m2 
+
+```{r}
+#chr01
+p1 <- manhattan.plot(GWAS_qk_dapc_method, 
+                     traits = c("Max_area_plant_m2"),
+                     models = "1-dom",
+                     chrom = "chr01") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_bonferroni@threshold[,2],
+                                GWAS_qk_dapc_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_m.eff@threshold[,2],
+                                GWAS_qk_dapc_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr01")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_DAPC_method/manhattan_qk_dapc_method_1-dom_model_max_area_plant_m2_chr01.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+#### yield_kg
+```{r}
+#chr06
+p1 <- manhattan.plot(GWAS_qk_dapc_method, 
+                     traits = c("yield_kg"),
+                     models = "1-dom",
+                     chrom = "chr06") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#440154")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_bonferroni@threshold[,2],
+                                GWAS_qk_dapc_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_m.eff@threshold[,2],
+                                GWAS_qk_dapc_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr06")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_DAPC_method/manhattan_qk_dapc_method_1-dom_model_yield_kg_chr06.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+
+```
+```{r}
+#chr09
+p1 <- manhattan.plot(GWAS_qk_dapc_method, 
+                     traits = c("yield_kg"),
+                     models = "1-dom",
+                     chrom = "chr09") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#440154")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_bonferroni@threshold[,2],
+                                GWAS_qk_dapc_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_m.eff@threshold[,2],
+                                GWAS_qk_dapc_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr09")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_DAPC_method/manhattan_qk_dapc_method_1-dom_model_yield_kg_chr09.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+
+```
+### 2-dom model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_qk_dapc_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "2-dom",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_bonferroni@threshold[,4],
+                                GWAS_qk_dapc_method_bonferroni@threshold[,5])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_m.eff@threshold[,4],
+                                GWAS_qk_dapc_method_m.eff@threshold[,5])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_DAPC_method/manhattan_qk_dapc_method_2-dom_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+As with the basic K-method, looking at the manhattan plots for the 2-dom model 
+there seems to be significant qtl for yield_kg on chr07. 
+Will plot this in more detail below.
+
+#### yield_kg
+
+```{r}
+#chr07
+p1 <- manhattan.plot(GWAS_qk_dapc_method, 
+                     traits = c("yield_kg"),
+                     models = "2-dom",
+                     chrom = "chr07") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_bonferroni@threshold[,4],
+                                GWAS_qk_dapc_method_bonferroni@threshold[,5])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_dapc_method_m.eff@threshold[,4],
+                                GWAS_qk_dapc_method_m.eff@threshold[,5])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr07")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_DAPC_method/manhattan_qk_dapc_method_2-dom_model_yield_kg-chr07.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+## Select significant QTL
+
+Based on the manhattan plots... 
+
+- The qk dapc method and 1-dom model found significant qtl for 
+Max_area_plant_m2 on chr01, yield_kg on chr06, and max_ave_height_m on chr05
+- The qk dapc method and 2-dom model found significant qtl for yield_kg on chr07
+
+We can extract these as below.
+
+### Check LD
+
+Before we can extract significant QTL it is worth double checking LD. 
+This should be almost identical to above for K-method but will double check.
+
+```{r, message=FALSE, warning=FALSE}
+p1 <- LD.plot(GWAS_qk_dapc_method, max.loci=NULL)+ #max.loci=NULL uses all loci for LD calc
+  xlim(0,30)+ #note this remove data but only need to see plateau so fine
+  geom_vline(xintercept = 10, col = "red", lty = "dashed", size = 2)+ #threshold
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line()
+  )
+
+p1
+
+# ggsave(
+#   filename = 
+#     "GWAS_poly_output/K_method/LD_plot_k_method.pdf", 
+#        plot = p1, device = pdf, width = 20, height = 20)
+```
+
+As before, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+
+### get.qtl
+
+We can extract the QTL as follows. Since we have both the Bonferroni and 
+M.eff thresholds have extracted the data for both.
+
+#### bonferroni
+
+```{r}
+qtl <- get.QTL(data=GWAS_qk_dapc_method_bonferroni,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_qtl_bonferroni.csv")
+```
+
+#### m.eff
+
+```{r}
+qtl <- get.QTL(data=GWAS_qk_dapc_method_m.eff,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_qtl_meff.csv")
+```
+
+Note how we have one more significant qtl for max_ave_height_m with the m.eff 
+threshold compared to the K-model (i.e. that qtl is more significant in the QK
+DAPC model).
+
+## λGC
+
+Calculate λGC values for the QK-DAPC method.
+
+```{r}
+lambda_GC_qk_dapc_method <- lambda_GC(
+  GWASpoly.fitted = GWAS_qk_dapc_method, 
+  models=c("additive",
+           "1-dom",
+           "2-dom"),
+  traits=c("yield_kg",
+           "Max_Max_height_m",
+           "Max_Ave_height_m",
+           "Max_area_plant_m2",
+           "Max_volume_plant_m3"),
+  qqplot = TRUE,
+  output_folder = "GWAS_poly_output/QK_DAPC_method/lambda_GC/")
+
+knitr::kable(lambda_GC_qk_dapc_method)
+```
+
+# GWAS STRUCTURE Q+K model
+
+```{r}
+GWAS_qk_structure_method <- 
+  GWASpoly(kinship_matrix,
+           models=c("additive",
+                    "1-dom",
+                    "2-dom"),
+           traits=c("yield_kg",
+                    "Max_Max_height_m",
+                    "Max_Ave_height_m",
+                    "Max_area_plant_m2",
+                    "Max_volume_plant_m3"),
+           params=QK_structure_params,
+           n.core=10)
+```
+
+## QQ-plots
+
+### yield_kg
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_structure_method, trait = "yield_kg")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_STRUCTURE_method/QQ_qk_structure_method_yield_kg.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Max_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_structure_method, trait = "Max_Max_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_STRUCTURE_method/QQ_qk_structure_method_Max_Max_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_Ave_height_m
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_structure_method, trait = "Max_Ave_height_m")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_STRUCTURE_method/QQ_qk_structure_method_Max_Ave_height_m.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_area_plant_m2
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_structure_method, trait = "Max_area_plant_m2")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_STRUCTURE_method/QQ_qk_structure_method_Max_area_plant_m2.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### Max_volume_plant_m3
+
+```{r}
+p1 <- qq.plot_edit(GWAS_qk_structure_method, trait = "Max_volume_plant_m3")+
+  scale_color_manual(values = c("#228833", #addtive
+                                "#4477AA", #1-dom alt
+                                "#66CCEE", #1-dom ref
+                                "#AA3377", #2-dom alt
+                                "#ee6677"))+ #2-dom ref
+  scale_shape_manual(aesthetics = "shape",
+                     values = c(15, #additive = square 
+                                16, #1-dom = circle
+                                16,
+                                17, #2-dom = triangle
+                                17))+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    legend.position = "none", #remove legend
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(filename = 
+         "GWAS_poly_output/QK_STRUCTURE_method/QQ_qk_structure_method_Max_volume_plant_m3.pdf", 
+       plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+## Multiple correction
+
+Bonferroni correction
+
+```{r}
+GWAS_qk_structure_method_bonferroni <- 
+  set.threshold(GWAS_qk_structure_method,
+                method="Bonferroni",
+                level=0.05)
+```
+
+m.eff correction
+
+```{r}
+GWAS_qk_structure_method_m.eff <- 
+  set.threshold(GWAS_qk_structure_method,
+                method="M.eff",
+                level=0.05)
+```
+
+## Manhattan plots 
+
+Visualises the distribution of -log10(p) values along the genome.
+
+### additive model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_qk_structure_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "additive",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 15)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add bonferroni threshold in red
+  geom_hline(yintercept = GWAS_qk_structure_method_bonferroni@threshold[,1],
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add m.eff threshold in blue
+  geom_hline(yintercept = GWAS_qk_structure_method_m.eff@threshold[,1],
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_STRUCTURE_method/manhattan_qk_structure_method_additive_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20) 
+```
+
+### 1-dom model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_qk_structure_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "1-dom",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_bonferroni@threshold[,2],
+                                GWAS_qk_structure_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_m.eff@threshold[,2],
+                                GWAS_qk_structure_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_STRUCTURE_method/manhattan_qk_structure_method_1-dom_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+As with basic K-model, looking at the manhattan plots for the 
+1-dom model with the QK STRUCTURE method there seems to be significant qtl for
+Max_area_plant_m2 on chr01 and yield_kg on chr06.
+
+Will plot these in more detail below
+
+#### Max_area_plant_m2 
+
+```{r}
+#chr01
+p1 <- manhattan.plot(GWAS_qk_structure_method, 
+                     traits = c("Max_area_plant_m2"),
+                     models = "1-dom",
+                     chrom = "chr01") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_bonferroni@threshold[,2],
+                                GWAS_qk_structure_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_m.eff@threshold[,2],
+                                GWAS_qk_structure_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr01")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_STRUCTURE_method/manhattan_qk_structure_method_1-dom_model_max_area_plant_m2_chr01.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+#### yield_kg
+```{r}
+#chr06
+p1 <- manhattan.plot(GWAS_qk_structure_method, 
+                     traits = c("yield_kg"),
+                     models = "1-dom",
+                     chrom = "chr06") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 16)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#440154")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_bonferroni@threshold[,2],
+                                GWAS_qk_structure_method_bonferroni@threshold[,3])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_m.eff@threshold[,2],
+                                GWAS_qk_structure_method_m.eff@threshold[,3])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr06")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_STRUCTURE_method/manhattan_qk_structure_method_1-dom_model_yield_kg_chr06.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+
+```
+
+### 2-dom model
+
+```{r}
+#manhattan plot 
+p1 <- manhattan.plot_edit(GWAS_qk_structure_method, 
+                     traits = c("yield_kg",
+                                "Max_Max_height_m",
+                                "Max_Ave_height_m",
+                                "Max_area_plant_m2",
+                                "Max_volume_plant_m3"),
+                     models = "2-dom",
+                     trait_labels = trait_labels) +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #change point size
+  geom_point(size = 3)+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_bonferroni@threshold[,4],
+                                GWAS_qk_structure_method_bonferroni@threshold[,5])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_m.eff@threshold[,4],
+                                GWAS_qk_structure_method_m.eff@threshold[,5])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40, #larger x axis text
+                                   angle=90,vjust=0.5), #vertical x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40) #larger facet titles
+  )
+
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_STRUCTURE_method/manhattan_qk_structure_method_2-dom_model.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+As with the basic K-method, looking at the manhattan plots for the 2-dom model 
+there seems to be significant qtl for yield_kg on chr07. 
+Will plot this in more detail below.
+
+#### yield_kg
+
+```{r}
+#chr07
+p1 <- manhattan.plot(GWAS_qk_structure_method, 
+                     traits = c("yield_kg"),
+                     models = "2-dom",
+                     chrom = "chr07") +
+  
+  #change shape to match qq plot
+  scale_shape_manual(values = 17)+
+  
+  #make points bigger
+  geom_point(size = 10)+
+  
+  #change colour to match full manhattan plot
+  scale_colour_manual(values = "#21908c")+
+  
+  #add max bonferroni threshold in red
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_bonferroni@threshold[,4],
+                                GWAS_qk_structure_method_bonferroni@threshold[,5])),
+             lty = "dashed",
+             col = "red", linewidth = 1.5)+
+  
+  #add max m.eff threshold in blue
+  geom_hline(yintercept = max(c(GWAS_qk_structure_method_m.eff@threshold[,4],
+                                GWAS_qk_structure_method_m.eff@threshold[,5])),
+             lty = "dashed",
+             col = "blue", linewidth = 1.5)+
+  
+  #add title
+  ggtitle("chr07")+
+  
+  theme(panel.grid.major = element_blank(), #remove major grid lines
+        panel.grid.minor = element_blank(), #remove minor grid lines
+        axis.line = element_line(), #add lines to axes
+        legend.position = "none", #remove legend
+        axis.text.x = element_text(size = 40), #larger x axis text
+        axis.title.x = element_text(size = 40), #larger x axis title
+        axis.text.y = element_text(size = 40), #larger y axis text
+        axis.title.y = element_text(size = 40), #larger y axis title
+        strip.text.x = element_text(size = 40), #larger facet titles,
+        plot.title = element_text(size = 40) #larger plot title
+  )
+
+ggsave(
+  filename = 
+    "GWAS_poly_output/QK_STRUCTURE_method/manhattan_qk_structure_method_2-dom_model_yield_kg-chr07.pdf", 
+  plot = p1, device = pdf, width = 33, height = 20)
+```
+
+## Select significant QTL
+
+Based on the manhattan plots... 
+
+- The qk STRUCTURE method and 1-dom model found significant qtl for 
+Max_area_plant_m2 on chr01 and yield_kg on chr06
+- The qk STRUCTURE method and 2-dom model found significant qtl for 
+yield_kg on chr07.
+
+We can extract these as below.
+
+### Check LD
+
+Before we can extract significant QTL it is worth double checking LD. 
+This should be almost identical to above for K-method but will double check.
+
+```{r, message=FALSE, warning=FALSE}
+p1 <- LD.plot(GWAS_qk_structure_method, max.loci=NULL)+ #max.loci=NULL uses all loci for LD calc
+  xlim(0,30)+ #note this remove data but only need to see plateau so fine
+  geom_vline(xintercept = 10, col = "red", lty = "dashed", size = 2)+ #threshold
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line()
+  )
+
+p1
+
+# ggsave(
+#   filename = 
+#     "GWAS_poly_output/K_method/LD_plot_k_method.pdf", 
+#        plot = p1, device = pdf, width = 20, height = 20)
+```
+
+As before, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+
+### get.qtl
+
+We can extract the QTL as follows. Since we have both the Bonferroni and 
+M.eff thresholds have extracted the data for both.
+
+#### bonferroni
+
+```{r}
+qtl <- get.QTL(data=GWAS_qk_structure_method_bonferroni,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_qtl_bonferroni.csv")
+```
+
+#### m.eff
+
+```{r}
+qtl <- get.QTL(data=GWAS_qk_structure_method_m.eff,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #see LD plot above
+
+knitr::kable(qtl)
+
+write.csv(qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_qtl_meff.csv")
+```
+
+Note how we have one less significant qtl for max_area_plant_m2 with the m.eff 
+threshold compared to the K-model (i.e. that qtl is less significant in this
+model).
+
+## λGC
+
+Calculate λGC values for the QK-STRUCTURE method.
+
+```{r}
+lambda_GC_qk_structure_method <- lambda_GC(
+  GWASpoly.fitted = GWAS_qk_structure_method, 
+  models=c("additive",
+           "1-dom",
+           "2-dom"),
+  traits=c("yield_kg",
+           "Max_Max_height_m",
+           "Max_Ave_height_m",
+           "Max_area_plant_m2",
+           "Max_volume_plant_m3"),
+  qqplot = TRUE,
+  output_folder = "GWAS_poly_output/QK_STRUCTURE_method/lambda_GC/")
+
+knitr::kable(lambda_GC_qk_structure_method)
+```
+
+# Compare results to Sharma et al., 2018
+
+Sharma et al., 2018 did GWAS analysis of height traits (among others). In this study no significant 
+associations for either of the height traits (max or mean) were found. However to facilitate comparison 
+between the studies we can extract the results for the SNPs associated with height in Sharma et al., 2018 to
+see how close they came to the thresholds here.
+
+First we shall load the SNPs linked to height in Sharma et al., 2018 and select only unique entries.
+
+```{r}
+sharma_2018_height_snps <- read.csv(file = "GWAS_poly_output/sharma_2018_height_snps.csv")
+
+unique_height_snps <- unique(na.omit(sharma_2018_height_snps$Marker))
+```
+
+Next we shall extract the data for these SNPs across all traits, GWAS methods (including both the bonferroni 
+and m.eff thresholds), and models.
+
+```{r}
+#define traits 
+traits <- c("yield_kg",
+            "Max_Max_height_m",
+            "Max_Ave_height_m",
+            "Max_area_plant_m2",
+            "Max_volume_plant_m3")
+
+#define methods
+gwas_methods <- list(GWAS_k_method_bonferroni = GWAS_k_method_bonferroni,
+                     GWAS_k_method_m.eff = GWAS_k_method_m.eff,
+                     GWAS_pk_method_bonferroni = GWAS_pk_method_bonferroni,
+                     GWAS_pk_method_m.eff = GWAS_pk_method_m.eff,
+                     GWAS_qk_dapc_method_bonferroni = GWAS_qk_dapc_method_bonferroni,
+                     GWAS_qk_dapc_method_m.eff = GWAS_qk_dapc_method_m.eff,
+                     GWAS_qk_structure_method_bonferroni = GWAS_qk_structure_method_bonferroni,
+                     GWAS_qk_structure_method_m.eff = GWAS_qk_structure_method_m.eff)
+
+#define models
+models <- c("additive",
+            "1-dom-alt",
+            "1-dom-ref",
+            "2-dom-alt",
+            "2-dom_ref")
+
+#initialize list to store results
+height_snp_comparison <- list()
+
+#loop throught traits and gwas methods
+for(trait in traits) {
+  for(gwas_name in names(gwas_methods)){
+    
+    gwas_method <- gwas_methods[[gwas_name]] #set current gwas method
+    
+    #extract thresholds for current trait
+    thresholds <- gwas_method@threshold %>%
+      as.data.frame() %>%
+      rownames_to_column(var = "trait") %>%
+      filter(trait == !!trait) %>%
+      column_to_rownames(var = "trait")
+    
+    #extract scores for current trait
+    scores_df <- gwas_method@scores[[trait]] %>%
+      rownames_to_column(var = "SNP") %>%
+      filter(SNP %in% unique_height_snps)
+    
+    #create initial summary table for current trait
+    trait_data <- scores_df %>%
+      select(SNP) %>%
+      mutate(trait = trait,
+             gwas_method = gwas_name)
+    
+    #add model scores and thresholds
+    for (model in models) {
+      if (model %in% colnames(scores_df) && model %in% colnames(thresholds)) {
+        trait_data <- trait_data %>%
+          mutate(!!paste0("log10_", model) := scores_df[[model]],
+                 !!paste0("threshold_", model) := thresholds[[model]])
+      }
+    }
+    
+    #add results to list
+    height_snp_comparison[[paste(trait, gwas_name, sep = "_")]] <- trait_data
+  }
+}
+```
+
+Finally we save all the results to excel file with each trait/gwas method on a separate sheet.
+
+```{r}
+#shorten names in list so each sheet in excel file can be named clearly
+names(height_snp_comparison) <- names(height_snp_comparison) %>%
+  str_replace("Max_Max_height_m", "Max_height") %>%
+  str_replace("Max_Ave_height_m", "Mean_height") %>%
+  str_replace("yield_kg", "yield") %>%
+  str_replace("Max_area_plant_m2", "canopy_area") %>%
+  str_replace("Max_volume_plant_m3", "canopy_vol") %>%
+  str_replace("_GWAS", "") %>%
+  str_replace("_method", "") %>%
+  str_replace("structure", "struc") %>%
+  str_replace("bonferroni", "bonferr")
+
+#save to single excel file
+writexl::write_xlsx(height_snp_comparison, 
+                    path = "GWAS_poly_output/height_comparison_snps.xlsx")
+```
+
+
+## References
+
+ENDELMAN, J. (2023). Package ‘GWASpoly’ manual. [Online]. Available at: https://jendelman.github.io/GWASpoly/GWASpoly_manual.pdf [Accessed: 17 December 2024].
+
+ENDELMAN, J. (2024). GWASpoly Version 2. [Online]. Available at: https://jendelman.github.io/GWASpoly/GWASpoly.html [Accessed: 17 December 2024].
+
+MAREES, A.T., DE KLUIVER, H., STRINGER, S., VORSPAN, F., CURIS, E., MARIE-CLAIRE, C., and DERKS, E.M. (2018). ‘A tutorial on conducting genome-wide association studies: Quality control and statistical analysis,’ International Journal of Methods in Psychiatric Research, 27(2), pp. e1608. doi:10.1002/mpr.1608.
+
+ROSYARA, U.R., DE JONG, W.S., DOUCHES, D.S., and ENDELMAN, J.B. (2016). ‘Software for Genome-Wide Association Studies in Autopolyploids and Its Application to Potato,’ The Plant Genome, 9(2), pp. doi:10.3835/plantgenome2015.08.0073.
+
+SHARMA, S.K., MACKENZIE, K., MCLEAN, K., DALE, F., DANIELS, S., and BRYAN, G.J. (2018). ‘Linkage Disequilibrium and Evaluation of Genome-Wide Association Mapping Models in Tetraploid Potato,’ G3 (Bethesda), 8(10), pp. 3185-3202. doi:10.1534/g3.118.200377.
+
+STICH, B., MÖHRING, J., PIEPHO, H.P., HECKENBERGER, M., BUCKLER, E.S., and MELCHINGER, A.E. (2008). ‘Comparison of mixed-model approaches for association mapping,’ Genetics, 178(3), pp. 1745-54. doi:10.1534/genetics.107.079707.
+
