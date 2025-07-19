@@ -13,8 +13,8 @@ output of this analysis, respectively.
 [GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/GWAS_poly.Rmd) and [/GWAS_poly_.Rmd_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/GWAS_poly_output) provide the code used for GWAS analysis using [GWASpoly v2.13](https://github.com/jendelman/GWASpoly) and
 output of this analysis, respectively.
 
-#### SNP_pheno_dist
-[SNP_BLUEs_dist_analysis.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/SNP_pheno_dist_analysis.Rmd) and [/SNP_BLUEs_dist](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/SNP_pheno_dist) provide the code used to visualize trait BLUEs for significant 
+#### SNP_BLUEs_dist
+[SNP_BLUEs_dist_analysis.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/SNP_pheno_dist_analysis.Rmd) and [/SNP_BLUEs_dist](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/SNP_pheno_dist) provide the code used to visualize the distribution of trait BLUEs for significant 
 SNPs across the five possible genotypes in potato and the resulting boxplots + the relevant data, respectively.
 
 #### STRUCTURE
