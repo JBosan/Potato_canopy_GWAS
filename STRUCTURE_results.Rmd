@@ -1,0 +1,450 @@
+---
+title: "STRUCTURE_results"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r, message=FALSE}
+library(tidyverse)
+library(viridis) # for colours on alpha graph
+```
+
+# Load and prep alpha data
+
+First we load all the files into a single named list.
+
+```{r}
+# Set the directory
+file_path <- "STRUCTURE/final_results/alpha_data"
+
+# Create a list of file paths for all files in directory
+files <- list.files(path = file_path, pattern = "*.txt", full.names = TRUE)
+
+# Create final list containing the data
+alpha_data_list <- lapply(files, read.table) %>% #load files with read.table
+  setNames(basename(files)) #name each df in list
+```
+
+Next convert the list to a single df and add a column to specify file names. Also edit cols into format for
+plotting.
+
+```{r}
+alpha_data_df <- bind_rows(
+  lapply(names(alpha_data_list), function(name) {
+    df <- alpha_data_list[[name]]
+    df$K <- str_extract(name, "^[^_]+")  # Add K value as a new column
+    df$rep <- str_extract(name, "rep\\d+") # Add rep num as a new column i.e. rep1 ... rep30
+    return(df)
+  })
+)
+
+#remove colon in first col
+alpha_data_df$V1 <- gsub(alpha_data_df$V1, pattern = ":", replacement = "")
+
+#convert first col to numeric
+alpha_data_df$V1 <- as.numeric(alpha_data_df$V1)
+
+#rename cols
+alpha_data_df <- alpha_data_df %>%
+  rename(mcmc_step = V1) %>%
+  rename(alpha = V2)
+
+#convert replicate to a factor
+alpha_data_df$rep <- as.factor(alpha_data_df$rep)
+
+#convert K to a factor
+alpha_data_df$K <- as.factor(alpha_data_df$K)
+```
+
+# Plot alpha data
+
+```{r}
+#convert 0 to NA to avoid -Inf when doing min and max (log(0) = -Inf) below
+alpha_data_df[alpha_data_df == 0] <- NA 
+
+# Generate and save plots
+for (i in unique(alpha_data_df$K)) {
+  
+  # Subset data for the for current K
+  subset_df <- filter(alpha_data_df, K == i)
+  
+  min_y = min(log(subset_df$alpha),na.rm = T) #determine current K min y/alpha
+  max_y = max(log(subset_df$alpha),na.rm = T) #determine current K max y/alpha
+  
+  # Ensure limits are at least -2 to 2
+  y_limits <- c(ifelse(min_y >= -2, -2, min_y), 
+                ifelse(max_y <= 2, 2, max_y))
+  
+  #plot line graph of mcmc step vs log(alpha) colour coded by replicate
+  p <- ggplot(data = subset_df,
+    aes(x = mcmc_step, y = log(alpha), colour = rep)) +
+    geom_line() + 
+    
+    #change to viridis colour palette
+    scale_color_viridis(discrete = TRUE)+
+    
+    #Set forced Y limits
+    scale_y_continuous(limits = y_limits) + 
+    
+    geom_vline(xintercept = 20000, #add line to indicate end of BURNIN period
+               col = "red", lty = "dashed", linewidth = 2) +
+    
+    ylab(expression("Log("~alpha~")"))+
+    
+    xlab("MCMC Iteration")+
+    
+    #adjust theme
+    theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    legend.position="none" #remove legend
+    )
+  
+  # Define output filename
+  output_file <- file.path("STRUCTURE/final_results/alpha_data/", 
+                           paste0("alpha_plot_", i, ".pdf"))
+  
+  # Save plot as PDF
+  ggsave(filename = output_file, plot = p, device = "pdf", width = 20, height = 10)
+}
+```
+
+# Load evanno data
+
+```{r}
+evanno_res <- read.table(file = "STRUCTURE/final_results/bestK/evanno.txt") #read in file
+```
+
+```{r}
+#rename cols to make easier
+evanno_res <- evanno_res %>%
+  rename(K = V1) %>%
+  rename(Reps = V2) %>%
+  rename(LK = V3) %>%
+  rename(Stdev_LK = V4) %>%
+  rename(L_prime_K = V5) %>%
+  rename(L_prime_prime_K = V6) %>%
+  rename(delta_K = V7)
+```
+
+# Plot L(K)
+
+In order to estimate Pr(X|K) across all replicates (in this case 30) STRUCTURE calculates Ln P(D), also
+known as L(K). This value is calculated as follows...
+
+L(K) = (Mean of all log likelihoods at each MCMC step) - (0.5 * variance of all log likelihoods at each MCMC step).
+
+```{r}
+p1 <- evanno_res %>%
+  ggplot(mapping = aes(x = K, y = LK)) +
+  geom_point(size = 4)+
+  geom_line(linewidth = 1)+
+  
+  #add error bars for Stdev
+  geom_errorbar(aes(x = K, 
+                    ymin = LK - Stdev_LK, 
+                    ymax = LK + Stdev_LK), 
+                width=1) +
+  
+  #adjust scale
+  scale_x_continuous(breaks = seq(1,10,1))+
+  scale_y_continuous(limits = c(-1010000,-970000), breaks = seq(-1010000,-970000, 10000))+
+  
+  #text
+  ylab("L(K)")+
+  
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+p1
+
+ggsave(filename = "STRUCTURE/final_results/bestK/LK_plot.pdf", p1, width = 15, height = 10)
+```
+
+It is often the case that once the real K is reached, L(K) at larger
+K values  plateaus  or  continues increasing  slightly and variance increases
+between runs. Based on this fact and the graph above K looks to be around 4 or 5 
+suggesting there are 4 or 5 subpopulations in the data.
+
+# Plot Delta_K
+
+∆K is calculated based on the following...
+
+- L'(K) = L(K) - L(K-1), for example...
+  - This gives the 1st order rate of change for L(K) with respect to K, for example...
+
+```{r}
+paste("At K = 3, L'(K) is given by", 
+      evanno_res$LK[3], 
+      "minus", 
+      evanno_res$LK[2], 
+      "which equals", 
+      evanno_res$LK[3] - evanno_res$LK[2])
+```
+
+- L''(K) = | L'(K+1) - L'(K) |.
+  - This gives the 2nd order rate of change for L(K) with respect to K, for example...
+
+```{r}
+paste("At K = 3, L''(K) is given by the absolute value of", 
+      evanno_res$LK[4], 
+      "minus", 
+      evanno_res$LK[3], 
+      "which equals", 
+      abs(evanno_res$L_prime_K[4] - evanno_res$L_prime_K[3]))
+```
+
+- ∆K = L''(K)/stdev L(K), for example...
+
+```{r}
+paste("At K = 3, ∆K is given by", 
+      evanno_res$L_prime_prime_K[3], 
+      "divided by", 
+      evanno_res$Stdev_LK[3], 
+      "which equals", 
+      evanno_res$L_prime_prime_K[3]/evanno_res$Stdev_LK[3])
+```
+
+Note the division by stdev L(K) is done as there is a clear and general trend toward an increase of the 
+variance of L(K) between runs as K increases. The modal/maximal value of the distribution of ∆K is usually
+found at the real K. The height of this modal value can visually indicate strength of the signal detected by 
+STRUCTURE.
+
+```{r, warning=FALSE}
+p1 <- evanno_res %>%
+  ggplot(mapping = aes(x = K, y = delta_K)) +
+  geom_point(size = 4)+
+  geom_line(linewidth = 1)+
+  
+  #adjust scale
+  scale_x_continuous(breaks = seq(1,10,1))+
+  scale_y_continuous(limits = c(0,150), breaks = seq(0,150,50))+
+  
+  #text
+  ylab(expression(Delta~"K"))+
+  
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+p1
+
+ggsave(filename = "STRUCTURE/final_results/bestK/deltaK_plot.pdf", p1, width = 15, height = 10)
+```
+
+Based on the graph of Delta K the maximal delta K value occurs at K=2.
+
+However, based on this and the previous graph I would argue that the optimal value for K in this data is
+K = 3. 
+
+# Load CLUMPP data
+
+Have run CLUMPP for the optimal K value/number of subpopulations i.e. K=3. Essentially CLUMPP takes all the 
+replicates and merges the files to give the most accurate Q-matrix.
+
+(Note to convert data to format for CLUMPP have used structure_harvester and some basic commands to edit the 
+file into the correct input format for CLUMPP).
+
+```{r}
+clumpp_res <- read.table(file = "STRUCTURE/final_results/bestK/CLUMPP/K3.outfile") #read file
+```
+
+# Plot final structure results
+
+First we shall create a graph with all the cultivar names given, this will likely not go in the final results
+but may still be useful for the supplementary material.
+
+We can create a vector of cultivar names as below.
+
+```{r}
+cultivar_names <- read.csv(file = "raw_data/genotype/sharma_genotype_reduced_recoded.csv") %>%
+  select(Variety.name) %>%
+  pull()
+```
+
+Here we prepare the structure data for K=3 and plot a stacked bar graph to display the results.
+
+```{r}
+#sort data into format for plotting
+p1 <- clumpp_res %>%
+  
+  #rename cols
+  rename(ID = V1) %>%
+  rename(K1 = V6) %>%
+  rename(K2 = V7) %>%
+  rename(K3 = V8) %>%
+  
+  #select required cols
+  select(ID, K1, K2, K3) %>%
+  
+  #add cultivar names col
+  add_column(cultivar = cultivar_names, .after = "ID") %>%
+  
+  #convert to long format
+  pivot_longer(cols = K1:K3,
+               names_to = "K") %>%
+  
+  #set K as factor and specify order to plot, K1 at bottom
+  mutate(K = factor(K, levels = c("K3", "K2", "K1"))) %>%
+  
+  #plot stacked bar chart
+  ggplot(mapping = aes(x = cultivar, y = value, fill = K)) +
+  geom_col(position = "stack")+
+  scale_fill_manual(breaks = c("K1", "K2", "K3"), #alphabetical for legend
+                    values = c("#D81B60", "#1E88E5", "#FFC107"))+ #custom colours
+  ylab("Membership Probability") +
+  xlab(NULL)+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 10, angle=90), #smaller + vertical x axis text
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    legend.text = element_text(size = 40),     # Increase legend text size
+    legend.title = element_text(size = 40),   # Increase legend title size
+    legend.key.size = unit(3, "cm")         # Increase size of legend key
+  )
+
+ggsave(filename = "STRUCTURE/final_results/bestK/K3_graph_cultivar_names.pdf", p1, width = 40, height = 20)
+```
+
+Will also create a plot with just numeric ID for labels which is clearer for presentation of final results.
+
+```{r}
+#create reduced list of cultivars
+reduced_cultivars <- cultivar_names[seq(1,282,40)]
+
+#edit original plot
+p2 <- 
+  
+  p1 +
+  
+  #reduce the number of labels + change to numeric ID
+  scale_x_discrete(breaks = reduced_cultivars, labels = seq(1,282,40))+ 
+  
+  xlab("Cultivar ID")+
+  
+  theme(
+    axis.text.x = element_text(size = 40, angle=0), #back to horizontal labels,
+    axis.title.x = element_text(size = 40), #larger x axis title
+    )
+
+ggsave(filename = "STRUCTURE/final_results/bestK/K3_graph_numeric_ID.pdf", p2, width = 30, height = 10)
+```
+
+We can also plot a graph of the most likely cluster for each individual in the dataset.
+
+```{r}
+p3 <- clumpp_res %>%
+  
+  #rename cols
+  rename(K1 = V6) %>%
+  rename(K2 = V7) %>%
+  rename(K3 = V8) %>%
+  
+  #select required cols
+  select(K1, K2, K3) %>%
+  
+  #select max value + associated K for each individual
+  rowwise() %>%
+  mutate(
+    max_prob = max(c_across(everything())), # Max membership prob for individual
+    K = names(.)[which.max(c_across(everything()))] #K associated with max value
+  ) %>%
+  ungroup() %>% # Ungroup to avoid issues with grouped data
+  
+  add_column(ID = seq(1,282,1), .before = "K1") %>%
+  
+  #plotted stacked bar chart
+  ggplot(mapping = aes(x = ID, y = max_prob, fill = K)) +
+  geom_col(position = "dodge")+
+  scale_fill_manual(breaks = c("K1", "K2", "K3"), #alphabetical for legend
+                    values = c("#D81B60", "#1E88E5", "#FFC107"))+  #custom colours
+  scale_x_continuous(breaks = seq(1,282,40))+ #adjust x-axis breaks
+  scale_y_continuous(limits = c(0,1), breaks = seq(0,1,0.25))+ #adjust y-axis breaks
+  ylab("Membership Probability") +
+  xlab("Cultivar ID")+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    legend.text = element_text(size = 40),     # Increase legend text size
+    legend.title = element_text(size = 40),   # Increase legend title size
+    legend.key.size = unit(3, "cm")         # Increase size of legend key
+  )
+
+ggsave(filename = "STRUCTURE/final_results/bestK/K3_graph_most_likely_K.pdf", p3, width = 30, height = 10)
+```
+
+We can check how many individuals belong to each cluster as below.
+
+```{r}
+cluster_assignments <- clumpp_res %>%
+  
+  #rename cols
+  rename(K1 = V6) %>%
+  rename(K2 = V7) %>%
+  rename(K3 = V8) %>%
+  
+  #select required cols
+  select(K1, K2, K3) %>%
+  
+  #select max value + associated K for each individual
+  rowwise() %>%
+  mutate(
+    max_prob = max(c_across(everything())), # Max membership prob for individual
+    K = names(.)[which.max(c_across(everything()))] #K associated with max value
+  ) %>%
+  ungroup() %>% # Ungroup to avoid issues with grouped data
+  
+  pull(K) %>%
+
+  #count occurences of each K
+  table() %>%
+  
+  as_tibble() %>%
+
+  #count percent of individuals assigned to each K
+  mutate(percent = round(n/sum(n)*100, 1)) 
+  
+knitr::kable(cluster_assignments)
+  
+write.csv(cluster_assignments, 
+          file = "STRUCTURE/final_results/bestK/K3_cluster_assignments.csv",
+          row.names = FALSE)
+```
+
+
+# References
+
+PRITCHARD, J.K., STEPHENS, M., and DONNELLY, P. (2000). ‘Inference of population structure using multilocus genotype data,’ Genetics, 155(2), pp. 945-59. doi:10.1093/genetics/155.2.945.
+
+EVANNO, G., REGNAUT, S., and GOUDET, J. (2005). ‘Detecting the number of clusters of individuals using the software structure: a simulation study,’ Molecular Ecology, 14(8), pp. 2611-2620. doi:10.1111/j.1365-294X.2005.02553.x.
