@@ -1,0 +1,360 @@
+---
+title: "STRUCTURE_prep"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r, message=FALSE}
+library(tidyverse)
+```
+
+# Load gene dosage data
+
+```{r}
+#load gene dosage data
+gene_dosage <- read.csv(file = "raw_data/genotype/sharma_genotype_reduced_recoded.csv")
+
+#prep data
+gene_dosage <- 
+  gene_dosage %>%
+  column_to_rownames(var = "Variety.name") %>%
+  mutate_all(~na_if(., -9)) #replace -9 with NA
+```
+
+# Filtering and thresholds
+
+## Filter missing data
+
+First we shall filter out SNPs with >20 % missing data (note this matches
+the approach used in Sharma et al., 2018)
+
+```{r, message=FALSE}
+colSums(is.na(gene_dosage)) %>% #number of NAs for each SNP/col
+  as_tibble() %>% #convert to tibble
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(SNP = colnames(gene_dosage)) %>% #add col of SNP names
+  mutate(Percentage_NAs = (Number_of_NAs/nrow(gene_dosage)*100)) %>% #%NAs 
+  ggplot(mapping = 
+           aes(x = SNP, y = Percentage_NAs, #plot SNP vs % NA
+               label = SNP)) + #set up labels
+  geom_point() + #dotplot
+  geom_hline(yintercept = 20, col = "red") + #add 20% threshold 
+  scale_y_continuous(limits = c(0,50), breaks = seq(0,50,10)) + #adjust y-scale
+  ylab("Percentage (%) NAs")+
+  theme(
+    axis.line.y = element_line(), #add lines to axes
+    axis.text.x = element_blank(), #remove x-axis text to make clearer
+  )
+```
+
+On the graph the red line is a threshold of 20% missing data, based on the
+approach used in Sharma et al., 2018. However, its hard to tell how many SNPs 
+are missing more than 20% of the data so we can count them as follows.
+
+```{r}
+colSums(is.na(gene_dosage)) %>% #number of NAs for each SNP/col
+  as_tibble() %>% #convert to tibble
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(SNP = colnames(gene_dosage)) %>% #add col of SNP names
+  mutate(Percentage_NAs = (Number_of_NAs/nrow(gene_dosage)*100)) %>% #%NAs 
+  filter(Percentage_NAs >= 20) %>%
+  nrow() %>%
+  paste("SNPs have >=20% missing data")
+
+colSums(is.na(gene_dosage)) %>% #number of NAs for each SNP/col
+  as_tibble() %>% #convert to tibble
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(SNP = colnames(gene_dosage)) %>% #add col of SNP names
+  mutate(Percentage_NAs = (Number_of_NAs/nrow(gene_dosage)*100)) %>% #%NAs 
+  filter(Percentage_NAs < 20) %>%
+  nrow() %>%
+  paste("SNPs have <20% missing data and can be used for analysis")
+```
+
+We shall remove SNPs with >=20% missing data for subsequent analysis. 
+
+```{r}
+#vector of SNPs with <20% missing
+missing_filter_SNPs <- 
+  colSums(is.na(gene_dosage)) %>% #number of NAs for each SNP/col
+  as_tibble() %>% #convert to tibble
+  rename(Number_of_NAs = value) %>% #rename col
+  mutate(SNP = colnames(gene_dosage)) %>% #add col of SNP names
+  mutate(Percentage_NAs = (Number_of_NAs/nrow(gene_dosage)*100)) %>% #%NAs 
+  filter(Percentage_NAs < 20) %>%
+  pull(SNP)
+
+#create filtered dataset
+gene_dosage_filtered <- gene_dosage %>%
+  select(all_of(missing_filter_SNPs))
+```
+
+## Calculate allele frequencies
+
+First calculate the total number of alleles (4x the number of individuals as
+potato is tetraploid).
+
+```{r}
+total_alleles <- 4 * nrow(gene_dosage_filtered)
+```
+
+Calculate frequency of B allele. This is just the sum of each col (marker)
+for the initial gene dosage divided by total alleles.
+
+```{r}
+freq_B_allele <- gene_dosage_filtered %>%
+  colSums(na.rm = TRUE)/total_alleles
+```
+
+Calculate frequency of A allele. Again sum of each col (marker)
+divided by total alleles. But this time to convert to A allele dosages
+need to do 4 - initial gene dosage i.e. AAAB = 1 B or 4-1 = 3 A.
+
+```{r}
+freq_A_allele <- (4 - gene_dosage_filtered) %>% #note need brackets else doesnt work
+  colSums(na.rm = TRUE)/total_alleles
+```
+
+## Calculate and plot MAF
+
+We can get the minor allele frequency (MAF) by taking parallel minima for each
+pair of samples in the two vectors for A and B allele frequency.
+
+```{r}
+maf <- pmin(freq_A_allele, freq_B_allele)
+
+p1 <- maf %>%
+  as_tibble() %>% #convert to tibble
+  rename(MAF = value) %>% #rename col
+  ggplot(aes(x = MAF)) +
+  geom_histogram(binwidth = 0.01, col = "black", 
+                 fill = "lightgrey")+ #plot histogram of MAF
+  xlab("Minor Allele Frequency (MAF)") +
+  ylab("SNP Count")+
+  scale_y_continuous(limits = c(0,200), breaks = seq(0,200,50))+ #y-axis scale
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+#save plot
+ggsave(
+  filename = 
+    "STRUCTURE/data_prep/minor_allele_frequency.pdf", 
+       plot = p1, device = pdf, width = 15, height = 10) 
+```
+
+## Calculate and plot PIC 
+
+PIC = polymorphic information content. Have used the equation from
+Botstein et al., 1980, which in simple terms is:
+
+1 - sum of squared allele frequencies - probability of heterozygosity
+
+```{r}
+sum_square_allele_freq <- freq_A_allele^2 + freq_B_allele^2
+
+prob_heterozygosity <- 2 * (freq_A_allele^2 * freq_B_allele^2)
+
+PIC <- 1 - sum_square_allele_freq - prob_heterozygosity
+
+p1 <- PIC %>%
+  as_tibble() %>% #convert to tibble
+  rename(PIC = value) %>% #rename col
+  ggplot(aes(x = PIC)) +
+  geom_histogram(binwidth = 0.05, col = "black", 
+                 fill = "lightgrey") + #plot histogram of PIC
+  geom_vline(xintercept = 0.4, col = "red", lty = "dashed", linewidth = 2) + #add threshold, see below
+  xlab("Polymorphic Information Content (PIC)") +
+  ylab("SNP Count")+
+  theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40) #larger y axis title
+  )
+
+#save plot
+ggsave(
+  filename = 
+    "STRUCTURE/data_prep/polymorphic_information_content.pdf", 
+       plot = p1, device = pdf, width = 15, height = 10) 
+```
+
+## Establish PIC threshold
+
+According to Botstein et al., 1980 and Serrote et al., 2020:
+
+PIC values for co-dominant markers range from 0 (monomorphic) to 
+1 (very highly informative, with several alleles of equal frequency). Those with
+values greater than 0.5 are considered to be very informative, values between 
+0.25 and 0.50 are somewhat informative, and values lower than 0.25 are not very 
+informative/uninformative.
+
+Thus, PIC values can be used to classify SNPs based on their "informativeness".
+We shall use this fact to select only the most informative SNPs. This will give
+a reduced dataset that can be used to ensure STRUCTURE analysis runs in a
+timely manner with available computational resources whilst still giving accurate
+results.
+
+To establish a threshold see how many SNPs fall into each category...
+
+```{r}
+PIC %>%
+  as_tibble() %>% #convert to tibble
+  rename(PIC = value) %>% #rename col
+  filter(PIC < 0.25) %>%
+  nrow() %>%
+  paste("SNPs are uninformative (PIC < 0.25)")
+
+PIC %>%
+  as_tibble() %>% #convert to tibble
+  rename(PIC = value) %>% #rename col
+  filter(PIC > 0.25 & PIC < 0.5) %>%
+  nrow() %>%
+  paste("SNPs are moderately informative (0.25 < PIC < 0.5)")
+
+PIC %>%
+  as_tibble() %>% #convert to tibble
+  rename(PIC = value) %>% #rename col
+  filter(PIC > 0.5) %>%
+  nrow() %>%
+  paste("SNPs are highly informative (PIC > 0.5)")
+
+PIC %>%
+  as_tibble() %>% #convert to tibble
+  rename(PIC = value) %>% #rename col
+  filter(PIC > 0.25) %>%
+  nrow() %>%
+  paste("SNPs are either moderately (0.25 < PIC < 0.5) or highly informative (PIC > 0.5)")
+```
+
+A threshold of at least 0.25 looks sensible and retains enough SNPs. However,
+to better ensure we only use the most informative possible SNPs for STRUCTURE 
+will do a threshold of PIC > 0.4.
+
+```{r}
+PIC %>%
+  as_tibble() %>% #convert to tibble
+  rename(PIC = value) %>% #rename col
+  filter(PIC > 0.4) %>%
+  nrow() %>%
+  paste("SNPs have a PIC > 0.4")
+```
+
+Based on this will create a list of SNPs that pass the missing data
+and PIC thresholds to subset the data during STRUCTURE file prep.
+
+```{r}
+structure_SNPs <- 
+  (1 - (freq_A_allele^2 + freq_B_allele^2) - (2*freq_A_allele^2*freq_B_allele^2)) %>%
+  as.data.frame() %>% #convert to df
+  rownames_to_column(var = "SNPs") %>% #add col of SNPs
+  rename(PIC = '.') %>% #rename col
+  filter(PIC > 0.4) %>%
+  pull(SNPs)
+```
+
+We can check how well distributed these SNPs are across the genome as below.
+
+```{r}
+SNP_pos <- read.csv(file = "raw_data/genotype/SNP_positions.csv")
+
+SNP_dist <- SNP_pos %>%
+  filter(solcap_SNP_ID %in% structure_SNPs) %>%
+  group_by(chr_v403) %>%
+  count()
+
+knitr::kable(SNP_dist)
+  
+write.csv(SNP_dist, file = "STRUCTURE/data_prep/SNP_distribution.csv") 
+```
+
+Despite some variation in the number of SNPs retained between chromosomes
+they look reasonably well distributed for analysis.
+
+# Prepare STRUCTURE file
+
+## Load the data.
+
+```{r}
+structure_data <- read.csv(file = "raw_data/genotype/sharma_genotype_reduced.csv")
+```
+
+## Recode genotype data to structure format
+
+A = ref allele = 0
+B = alt allele = 1
+
+```{r}
+structure_data[structure_data == "AAAA"] <- "0000"
+structure_data[structure_data == "AAAB"] <- "0001"
+structure_data[structure_data == "AABB"] <- "0011"
+structure_data[structure_data == "ABBB"] <- "0111"
+structure_data[structure_data == "BBBB"] <- "1111"
+```
+
+Also replace -9 (missing values) with aaaa to make splitting rows easier
+
+```{r}
+structure_data[structure_data == -9] <- "aaaa"
+```
+
+## Split each row into 4
+
+Split into 4 rows per cultivar i.e. one per chromosome in tetraploid.
+
+```{r}
+nrow(structure_data) #282 individuals
+structure_data <- separate_longer_position(structure_data, cols = c(2:ncol(structure_data)), 1)
+nrow(structure_data) #1128 = 4 chromosomes x 282 individuals
+```
+
+## Select SNPs that passed filtering
+
+I.e. SNPs with <20 % missing data and a PIC > 0.4
+
+```{r}
+structure_data <- structure_data %>%
+  select(c("Variety.name", all_of(structure_SNPs)))
+```
+
+## Convert back to STRUCTURE missing values
+
+Need to convert a added when splitting rows back to default missing value (-9)
+for STRUCTURE
+
+```{r}
+structure_data[structure_data == "a"] <- "-9"
+```
+
+## Save text file for STRUCTURE run in structure_threader
+
+Need to save this way to get it encoded in ascii format correctly
+
+```{r}
+write(t(structure_data),
+      ncol=length(structure_data[1,]),
+      file="raw_data/genotype/filtered_STRUCTURE_final.txt")
+```
+
+# References
+
+Botstein, D., White, R. L., Skolnick, M., & Davis, R. W. (1980). Construction of a genetic linkage map in man using restriction fragment length polymorphisms. American journal of human genetics, 32(3), 314–331.
+
+SERROTE, C.M.L., REINIGER, L.R.S., SILVA, K.B., RABAIOLLI, S.M.D.S., and STEFANEL, C.M. (2020). ‘Determining the Polymorphism Information Content of a molecular marker,’ Gene, 726(pp. 144175. doi:10.1016/j.gene.2019.144175.
+
+SHARMA, S.K., MACKENZIE, K., MCLEAN, K., DALE, F., DANIELS, S., and BRYAN, G.J. (2018). ‘Linkage Disequilibrium and Evaluation of Genome-Wide Association Mapping Models in Tetraploid Potato,’ G3 (Bethesda), 8(10), pp. 3185-3202. doi:10.1534/g3.118.200377.
