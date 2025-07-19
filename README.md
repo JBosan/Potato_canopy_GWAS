@@ -14,7 +14,7 @@ output of this analysis, respectively.
 output of this analysis, respectively.
 
 #### SNP_BLUEs_dist
-[SNP_BLUEs_dist_analysis.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/SNP_pheno_dist_analysis.Rmd) and [/SNP_BLUEs_dist](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/SNP_pheno_dist) provide the code used to visualize the distribution of trait BLUEs for significant 
+[SNP_BLUEs_dist_analysis.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/SNP_BLUEs_dist_analysis.Rmd) and [/SNP_BLUEs_dist](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/SNP_BLUEs_dist) provide the code used to visualize the distribution of trait BLUEs for significant 
 SNPs across the five possible genotypes in potato and the resulting boxplots + the relevant data, respectively.
 
 #### STRUCTURE
