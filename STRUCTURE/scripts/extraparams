@@ -1,0 +1,47 @@
+EXTRA PARAMS FOR THE PROGRAM structure.  THESE PARAMETERS CONTROL HOW THE
+PROGRAM RUNS.  ATTRIBUTES OF THE DATAFILE AS WELL AS K AND RUNLENGTH ARE 
+SPECIFIED IN mainparams.
+
+"(int)" means that this takes an integer value.
+"(d)"   means that this is a double (ie, a Real number such as 3.14).
+"(B)"   means that this variable is Boolean 
+        (ie insert 1 for True, and 0 for False).
+
+GENE MODEL TO USE = IN THIS CASE USE ADMIXTURE + CORRELATED ALLELE FREQUENCIES
+#define NOADMIX     0 // (B) Use no admixture model (0=admixture model, 1=no-admix), same as Sharma et al., 2018
+#define LINKAGE     0 // (B) Use the linkage model
+#define USEPOPINFO  0 // (B) Use prior population information to pre-assign individuals to clusters
+#define LOCPRIOR    0 //(B)  Use location information to improve weak data
+#define FREQSCORR   1 // (B) assume allele frequencies are correlated among pops, same as Sharma et al., 2018
+#define ONEFST      0 // (B) assume same value of Fst for all subpopulations, RECOMMEND SET TO O
+
+ALPHA VALUE = HAVE INFERRED AT EACH MCMC REP TO CHECK CONVERGENCE AND ASSESS MODEL
+#define INFERALPHA  1 // (B) Infer ALPHA (the admixture parameter)
+#define POPALPHAS   0 // (B) Individual alpha for each population, not recommended in most cases
+#define ALPHA     1.0 // (d) Dirichlet parameter for degree of admixture (this is the initial value if INFERALPHA==1).
+
+LAMBDA VALUE = USING A FIXED VALUE OF 1 IS BEST IN MOST SITUATIONS, HENCE HAVENT INFERRED
+#define LAMBDA    1.0 // (d) Dirichlet parameter for allele frequencies
+#define INFERLAMBDA 0 // (B) Infer LAMBDA (the allele frequencies parameter), not recommended in most cases
+#define POPSPECIFICLAMBDA 0 //(B) infer a separate lambda for each pop (only if INFERLAMBDA=1).
+
+Note one can also paramatize the priors for the probability models. But as stated in the manual default
+settings are fairly sensible in most cases so have not changed these here.
+
+PRINT DESCRIPTIVE DATA
+#define PRINTNET     1 // (B) Print the "net nucleotide distance" to screen during the run
+#define PRINTLAMBDA  0 // (B) Print current value(s) of lambda to screen, not needed as set to 1 above
+#define PRINTQSUM    1 // (B) Print summary of current population membership to screen
+
+OUTPUT FILE OPTIONS
+#define ECHODATA     1  // (B) Print some of data file to screen to check that the data entry is correct 
+#define SITEBYSITE 0 // (B) Print a complete summary of assignment probabilities for every genotype in the data, off as produces very large files
+#define PRINTQHAT 1 // (B) Print estimates to file with suffix q, required for other analysis (STRAT) if required later
+
+COLLECT DISTRIBUTION DATA FOR Q
+#define ANCESTDIST   1  // (B) collect data about the distribution of ancestry coefficients (Q) for each individual
+#define NUMBOXES   1000 // (int) the distribution of Q values is stored as a histogram with this number of boxes. 
+#define ANCESTPINT 1.0 // (d) the size of the displayed probability interval on Q (values between 0.0--1.0)
+
+COMPUTE PROBABILITIES FOR K ESTIMATES
+#define COMPUTEPROB 1 // (B) estimate the probability of the data given K and the model
