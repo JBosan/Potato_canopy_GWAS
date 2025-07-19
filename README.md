@@ -10,7 +10,7 @@ data and the output of this analysis, respectively.
 output of this analysis, respectively.
 
 #### GWASpoly
-[GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/GWAS_poly.Rmd) and [/GWAS_poly_.Rmd_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/GWAS_poly_output) provide the code used for GWAS analysis using [GWASpoly v2.13](https://github.com/jendelman/GWASpoly) and
+[GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/GWAS_poly.Rmd) and [/GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/GWAS_poly_output) provide the code used for GWAS analysis using [GWASpoly v2.13](https://github.com/jendelman/GWASpoly) and
 output of this analysis, respectively.
 
 #### SNP_BLUEs_dist
