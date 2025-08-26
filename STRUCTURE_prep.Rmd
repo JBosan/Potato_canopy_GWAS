@@ -242,9 +242,9 @@ PIC %>%
   paste("SNPs are either moderately (0.25 < PIC < 0.5) or highly informative (PIC > 0.5)")
 ```
 
-A threshold of at least 0.25 looks sensible and retains enough SNPs. However,
-to better ensure we only use the most informative possible SNPs for STRUCTURE 
-will do a threshold of PIC > 0.4.
+A threshold of PIC > 0.5 is too stringent and removes too many SNP (the data is reduced from 5157 SNPs to only 421 SNPs removing 4736 SNPs).
+
+However, a threshold of PIC PIC > 0.25 does not remove enough SNPs (it retains 3946 SNPs and only removes 1519 SNPs) to allow STRUCTURE to run in a timely manner as desired. Thus, a threshold somewhere in between, such as PIC > 0.4, would likely be best to strike a balance between computation time and enough informative SNPs.
 
 ```{r}
 PIC %>%
@@ -255,8 +255,7 @@ PIC %>%
   paste("SNPs have a PIC > 0.4")
 ```
 
-Based on this will create a list of SNPs that pass the missing data
-and PIC thresholds to subset the data during STRUCTURE file prep.
+PIC > 0.4 retains 1568 SNPs which seems reasonable. Based on this will create a list of SNPs that pass the missing data and PIC threshold of 0.4 to subset the data during STRUCTURE file prep.
 
 ```{r}
 structure_SNPs <- 
