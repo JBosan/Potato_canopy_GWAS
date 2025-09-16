@@ -1,7 +1,0 @@
-"","Trait","Model","Threshold","Marker","Chrom","Position","Ref","Alt","Score","Effect"
-"523","yield_kg","1-dom-alt",4.83,"solcap_snp_c1_15726","chr06",238858,0,1,7.2,2.21139527276084
-"4476","yield_kg","1-dom-ref",4.72,"solcap_snp_c2_54010","chr06",226737,0,1,7.2,-2.21139527276088
-"2700","yield_kg","1-dom-ref",4.72,"solcap_snp_c2_30501","chr06",257821,0,1,7.2,-2.21139527276088
-"1299","yield_kg","1-dom-ref",4.72,"solcap_snp_c1_9229","chr06",398132,0,1,7.2,-2.21139527276088
-"4133","yield_kg","2-dom-alt",4.93,"solcap_snp_c2_49834","chr07",10161381,0,1,5.95,-1.54346884425268
-"4201","Max_area_plant_m2","1-dom-ref",4.72,"solcap_snp_c2_50502","chr01",78809481,0,1,5.37,-0.0663632104713146
