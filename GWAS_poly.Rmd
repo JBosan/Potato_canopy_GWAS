@@ -1247,37 +1247,68 @@ Due to the large number of haplotypes in elite potato germplasm, and because
 many of the potato SNP array markers are not haplotype-specific, the LD is quite 
 low even at zero distance (Vos et al. 2017). 
 
-However, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+However, from the shape of the curve, a 10 Mb window seems appropriate. 
 
 ### get.qtl
 
 We can extract the QTL as follows. Since we have both the Bonferroni and 
-M.eff thresholds have extracted the data for both.
+M.eff thresholds have extracted the data for both. Moreover, in both cases have
+extracted QTL both with and without an LD window of 10 Mb (10e6) for comparison.
 
 #### bonferroni
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_k_method_bonferroni,
+all_qtl <- get.QTL(data=GWAS_k_method_bonferroni,
                traits=NULL, #selects all traits
                models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+               bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/K_method/k_method_qtl_bonferroni.csv")
+write.csv(all_qtl, "GWAS_poly_output/K_method/k_method_all_qtl_bonferroni.csv")
+```
+
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_k_method_bonferroni,
+               traits=NULL, #selects all traits
+               models=NULL, #selects all models
+               bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/K_method/k_method_LD_qtl_bonferroni.csv")
 ```
 
 #### m.eff
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_k_method_m.eff,
-               traits=NULL, #selects all traits
-               models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+all_qtl <- get.QTL(data=GWAS_k_method_m.eff,
+                   traits=NULL, #selects all traits
+                   models=NULL, #selects all models
+                   bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/K_method/k_method_qtl_meff.csv")
+write.csv(all_qtl, "GWAS_poly_output/K_method/k_method_all_qtl_m.eff.csv")
+```
+
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_k_method_m.eff,
+                  traits=NULL, #selects all traits
+                  models=NULL, #selects all models
+                  bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/K_method/k_method_LD_qtl_m.eff.csv")
 ```
 
 ## λGC
@@ -1998,43 +2029,69 @@ p1
 #        plot = p1, device = pdf, width = 20, height = 20)
 ```
 
-As before, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+As before, from the shape of the curve, a 10 Mb window seems appropriate. 
 
 ### get.qtl
 
 We can extract the QTL as follows. Since we have both the Bonferroni and 
-M.eff thresholds have extracted the data for both.
+M.eff thresholds have extracted the data for both. Moreover, in both cases have
+extracted QTL both with and without an LD window of 10 Mb (10e6) for comparison.
 
 #### bonferroni
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_pk_method_bonferroni,
-               traits=NULL, #selects all traits
-               models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+all_qtl <- get.QTL(data=GWAS_pk_method_bonferroni,
+                   traits=NULL, #selects all traits
+                   models=NULL, #selects all models
+                   bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/PK_method/pk_method_qtl_bonferroni.csv")
+write.csv(all_qtl, "GWAS_poly_output/PK_method/pk_method_all_qtl_bonferroni.csv")
+```
+
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_pk_method_bonferroni,
+                  traits=NULL, #selects all traits
+                  models=NULL, #selects all models
+                  bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/PK_method/pk_method_LD_qtl_bonferroni.csv")
 ```
 
 #### m.eff
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_pk_method_m.eff,
-               traits=NULL, #selects all traits
-               models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+all_qtl <- get.QTL(data=GWAS_pk_method_m.eff,
+                   traits=NULL, #selects all traits
+                   models=NULL, #selects all models
+                   bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/PK_method/pk_method_qtl_meff.csv")
+write.csv(all_qtl, "GWAS_poly_output/PK_method/pk_method_all_qtl_m.eff.csv")
 ```
 
-Note how we we have one more significant qtl for yield with the m.eff threshold 
-compared to the K-model. Also note that this does not appear significant on the
-Manhattan plot but this is because the max threshold for the two 1-dom models 
-is used.
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_pk_method_m.eff,
+                  traits=NULL, #selects all traits
+                  models=NULL, #selects all models
+                  bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/PK_method/pk_method_LD_qtl_m.eff.csv")
+```
 
 ## λGC
 
@@ -2468,6 +2525,7 @@ ggsave(
   plot = p1, device = pdf, width = 33, height = 20)
 
 ```
+
 ```{r}
 #chr09
 p1 <- manhattan.plot(GWAS_qk_dapc_method, 
@@ -2655,42 +2713,69 @@ p1
 #        plot = p1, device = pdf, width = 20, height = 20)
 ```
 
-As before, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+As before, from the shape of the curve, a 10 Mb window seems appropriate. 
 
 ### get.qtl
 
 We can extract the QTL as follows. Since we have both the Bonferroni and 
-M.eff thresholds have extracted the data for both.
+M.eff thresholds have extracted the data for both. Moreover, in both cases have
+extracted QTL both with and without an LD window of 10 Mb (10e6) for comparison.
 
 #### bonferroni
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_qk_dapc_method_bonferroni,
-               traits=NULL, #selects all traits
-               models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+all_qtl <- get.QTL(data=GWAS_qk_dapc_method_bonferroni,
+                   traits=NULL, #selects all traits
+                   models=NULL, #selects all models
+                   bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_qtl_bonferroni.csv")
+write.csv(all_qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_all_qtl_bonferroni.csv")
+```
+
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_qk_dapc_method_bonferroni,
+                  traits=NULL, #selects all traits
+                  models=NULL, #selects all models
+                  bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_LD_qtl_bonferroni.csv")
 ```
 
 #### m.eff
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_qk_dapc_method_m.eff,
-               traits=NULL, #selects all traits
-               models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+all_qtl <- get.QTL(data=GWAS_qk_dapc_method_m.eff,
+                   traits=NULL, #selects all traits
+                   models=NULL, #selects all models
+                   bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_qtl_meff.csv")
+write.csv(all_qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_all_qtl_m.eff.csv")
 ```
 
-Note how we have one more significant qtl for max_ave_height_m with the m.eff 
-threshold compared to the K-model (i.e. that qtl is more significant in the QK
-DAPC model).
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_qk_dapc_method_m.eff,
+                  traits=NULL, #selects all traits
+                  models=NULL, #selects all models
+                  bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/QK_DAPC_method/qk_dapc_method_LD_qtl_m.eff.csv")
+```
 
 ## λGC
 
@@ -3260,42 +3345,69 @@ p1
 #        plot = p1, device = pdf, width = 20, height = 20)
 ```
 
-As before, from the shape of the curve, a 5-10 Mb window seems appropriate. 
+As before, from the shape of the curve, a 10 Mb window seems appropriate. 
 
 ### get.qtl
 
 We can extract the QTL as follows. Since we have both the Bonferroni and 
-M.eff thresholds have extracted the data for both.
+M.eff thresholds have extracted the data for both. Moreover, in both cases have
+extracted QTL both with and without an LD window of 10 Mb (10e6) for comparison.
 
 #### bonferroni
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_qk_structure_method_bonferroni,
-               traits=NULL, #selects all traits
-               models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+all_qtl <- get.QTL(data=GWAS_qk_structure_method_bonferroni,
+                   traits=NULL, #selects all traits
+                   models=NULL, #selects all models
+                   bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_qtl_bonferroni.csv")
+write.csv(all_qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_all_qtl_bonferroni.csv")
+```
+
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_qk_structure_method_bonferroni,
+                  traits=NULL, #selects all traits
+                  models=NULL, #selects all models
+                  bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_LD_qtl_bonferroni.csv")
 ```
 
 #### m.eff
 
+First do all the QTL.
+
 ```{r}
-qtl <- get.QTL(data=GWAS_qk_structure_method_m.eff,
-               traits=NULL, #selects all traits
-               models=NULL, #selects all models
-               bp.window=10e6) #see LD plot above
+all_qtl <- get.QTL(data=GWAS_qk_structure_method_m.eff,
+                   traits=NULL, #selects all traits
+                   models=NULL, #selects all models
+                   bp.window=NULL) #no LD filtering
 
-knitr::kable(qtl)
+knitr::kable(all_qtl)
 
-write.csv(qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_qtl_meff.csv")
+write.csv(all_qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_all_qtl_m.eff.csv")
 ```
 
-Note how we have one less significant qtl for max_area_plant_m2 with the m.eff 
-threshold compared to the K-model (i.e. that qtl is less significant in this
-model).
+Next do the QTL filtered by the LD window.
+
+```{r}
+LD_qtl <- get.QTL(data=GWAS_qk_structure_method_m.eff,
+                  traits=NULL, #selects all traits
+                  models=NULL, #selects all models
+                  bp.window=10e6) #LD filter, see plot above
+
+knitr::kable(LD_qtl)
+
+write.csv(LD_qtl, "GWAS_poly_output/QK_STRUCTURE_method/qk_structure_method_LD_qtl_m.eff.csv")
+```
 
 ## λGC
 

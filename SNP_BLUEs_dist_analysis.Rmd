@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r, message=FALSE}
 library(tidyverse)
+library(viridis)
 ```
 
 # Intro
@@ -27,7 +28,7 @@ yield_BLUEs_dist <-
 
 #convert SNP dosages to factor
 yield_BLUEs_dist <- yield_BLUEs_dist %>%
-  mutate(across(3:7, as.factor))
+  mutate(across(3:10, as.factor))
 
 
 ```
@@ -63,9 +64,12 @@ for(snp in snps){
   # Get unique genotypes in alphabetical order (for display)
   unique_genos <- sort(unique(df[[snp]]))
   
-  # Assign alternating colors based on position
-  alt_colors <- rep(c("#440155", "#2D908C"), length.out = length(unique_genos))
-  names(alt_colors) <- unique_genos
+  # Assign colours based on genotype
+  colors <- c("AAAA" = "#75D3FF",
+              "AAAB" = "#57B0FF",
+              "AABB" = "#3D87FF",
+              "ABBB" = "#2957FF",
+              "BBBB" = "#191DF7")
   
   p <- yield_BLUEs_dist %>%
     na.omit() %>%
@@ -73,7 +77,7 @@ for(snp in snps){
                col = .[[snp]]))+ #colors
     geom_boxplot() + #boxplots
     geom_jitter() + #show points
-    scale_color_manual(values = alt_colors) + #alternating colors
+    scale_color_manual(values = colors) + #genotype-specific colors
     scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
     labs(x = snp, y = "Yield (Kg) BLUE") + #adjust labels
     
@@ -102,8 +106,9 @@ AAAA = recessive, AAAB, AABB, ABBB, BBBB = dominant.
 ```{r}
 #create a lookup table for the different models (see results summary table)
 yield_SNP_models <- data.frame(
-  SNP = c(colnames(yield_BLUEs_dist)[3:7]),
-  model = c("1-dom-alt", "1-dom-ref", "2-dom-alt", "1-dom-ref", "1-dom-alt")
+  SNP = c(colnames(yield_BLUEs_dist)[3:10]),
+  model = c("1-dom-alt", "1-dom-ref", "2-dom-alt", "1-dom-ref", "1-dom-alt",
+            "1-dom-ref", "1-dom-alt", "1-dom-ref")
 )
 
 #recode data
@@ -120,11 +125,23 @@ yield_SNP_recode <- yield_BLUEs_dist %>%
   #recode based on model
   mutate(genotype_class = case_when(
       model == "1-dom-alt" & genotype == "AAAA" ~ "recessive (AAAA)",
-      model == "1-dom-alt" & genotype != "AAAA" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "AAAB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "AABB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "ABBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "BBBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == NA ~ NA,
       model == "1-dom-ref" & genotype == "BBBB" ~ "recessive (BBBB)",
-      model == "1-dom-ref" & genotype != "BBBB" ~ "simplex dominant (A---)",
-      model == "2-dom-alt" & genotype == "AAAA" ~ "recessive (AAAA)",
-      model == "2-dom-alt" & genotype != "AAAA" ~ "duplex dominant (--BB)"
+      model == "1-dom-ref" & genotype == "AAAA" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AAAB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AABB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "ABBB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == NA ~ NA,
+      model == "2-dom-alt" & genotype == "AAAA" ~ "recessive (AAA-)",
+      model == "2-dom-alt" & genotype == "AAAB" ~ "recessive (AAA-)",
+      model == "2-dom-alt" & genotype == "AABB" ~ "duplex dominant (--BB)",
+      model == "2-dom-alt" & genotype == "ABBB" ~ "duplex dominant (--BB)",
+      model == "2-dom-alt" & genotype == "BBBB" ~ "duplex dominant (--BB)",
+      model == "2-dom-alt" & genotype == NA ~ NA,
     )) %>%
   
   #select required data
@@ -136,7 +153,7 @@ snps <- unique(yield_SNP_recode$SNP)
 #loop through each SNP
 for(snp in snps){
     
-    #filter by current snp + remove NAs
+  #filter by current snp + remove NAs
   df <- yield_SNP_recode %>%
     filter(SNP == snp) %>%
     na.omit()
@@ -197,9 +214,12 @@ for(snp in snps){
   # Get unique genotypes in alphabetical order (for display)
   unique_genos <- sort(unique(df[[snp]]))
   
-  # Assign alternating colors based on position
-  alt_colors <- rep(c("#440155", "#2D908C"), length.out = length(unique_genos))
-  names(alt_colors) <- unique_genos
+  # Assign colours based on genotype
+  colors <- c("AAAA" = "#75D3FF",
+              "AAAB" = "#57B0FF",
+              "AABB" = "#3D87FF",
+              "ABBB" = "#2957FF",
+              "BBBB" = "#191DF7")
   
   p <- area_BLUEs_dist %>%
     na.omit() %>%
@@ -207,7 +227,7 @@ for(snp in snps){
                col = .[[snp]]))+ #colors
     geom_boxplot() + #boxplots
     geom_jitter() + #show points
-    scale_color_manual(values = alt_colors) + #alternating colors
+    scale_color_manual(values = colors) + #genotype-specific colors
     scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
     labs(x = snp, #adjust labels
          y = expression("Max canopy area (m"^2*") BLUE")) + 
@@ -252,12 +272,20 @@ area_SNP_recode <- area_BLUEs_dist %>%
   left_join(area_SNP_models, by = "SNP") %>%
   
   #recode based on model
-  mutate(genotype_class = case_when(
-    model == "1-dom-alt" & genotype == "AAAA" ~ "recessive (AAAA)",
-    model == "1-dom-alt" & genotype != "AAAA" ~ "simplex dominant (---B)",
-    model == "1-dom-ref" & genotype == "BBBB" ~ "recessive (BBBB)",
-    model == "1-dom-ref" & genotype != "BBBB" ~ "simplex dominant (A---)",
-  )) %>%
+   mutate(genotype_class = case_when(
+      model == "1-dom-alt" & genotype == "AAAA" ~ "recessive (AAAA)",
+      model == "1-dom-alt" & genotype == "AAAB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "AABB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "ABBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "BBBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == NA ~ NA,
+      model == "1-dom-ref" & genotype == "BBBB" ~ "recessive (BBBB)",
+      model == "1-dom-ref" & genotype == "AAAA" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AAAB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AABB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "ABBB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == NA ~ NA
+    )) %>%
   
   #select required data
   select(Max_area_plant_m2, SNP, genotype_class)
