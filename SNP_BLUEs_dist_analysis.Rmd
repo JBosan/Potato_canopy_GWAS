@@ -1,0 +1,340 @@
+---
+title: "SNP_BLUEs_dist_analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r, message=FALSE}
+library(tidyverse)
+library(viridis)
+```
+
+# Intro
+
+Here we analyse the distribution of BLUEs values across the five possible genotypes (AAAA, AAAB, AABB, ABBB, BBBB) for all 282 cultivars for significant SNPs found during GWAS analysis. To do so .csv files containing BLUEs data for the relevant trait (yield or canopy area) and the SNP dosage data for the associated significant SNPs are used.
+
+# Load and prep data
+
+Yield_kg
+
+```{r}
+yield_BLUEs_dist <- 
+  read.csv(file = "SNP_BLUEs_dist/yield_BLUEs_dist_data.csv", header = TRUE)
+
+#convert SNP dosages to factor
+yield_BLUEs_dist <- yield_BLUEs_dist %>%
+  mutate(across(3:10, as.factor))
+
+
+```
+
+Max canopy area
+
+```{r}
+area_BLUEs_dist <- 
+  read.csv(file = "SNP_BLUEs_dist/area_BLUEs_dist_data.csv", header = TRUE)
+
+#convert SNP dosages to factor
+area_BLUEs_dist <- area_BLUEs_dist %>%
+  mutate(across(3:4, as.factor))
+```
+
+# Plot yield data
+
+First do it with all genotypes seperately
+
+```{r}
+#create vector of SNPs
+snps <- 
+  names(yield_BLUEs_dist)[grepl("solcap", names(yield_BLUEs_dist))]
+
+#loop through each SNP
+for(snp in snps){
+  
+  #extract and prep data for current snp
+   df <- yield_BLUEs_dist %>%
+    select(yield_kg, all_of(snp)) %>% #note dont need cultivar ID
+    na.omit() #remove NAs
+  
+  # Get unique genotypes in alphabetical order (for display)
+  unique_genos <- sort(unique(df[[snp]]))
+  
+  # Assign colours based on genotype
+  colors <- c("AAAA" = "#75D3FF",
+              "AAAB" = "#57B0FF",
+              "AABB" = "#3D87FF",
+              "ABBB" = "#2957FF",
+              "BBBB" = "#191DF7")
+  
+  p <- yield_BLUEs_dist %>%
+    na.omit() %>%
+    ggplot(aes(x = .[[snp]], y = yield_kg, #snp vs yield BLUE
+               col = .[[snp]]))+ #colors
+    geom_boxplot() + #boxplots
+    geom_jitter() + #show points
+    scale_color_manual(values = colors) + #genotype-specific colors
+    scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
+    labs(x = snp, y = "Yield (Kg) BLUE") + #adjust labels
+    
+    #adjust theme
+    theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    legend.position = "none" #no legend
+    )
+  
+    #save plots
+    ggsave(filename = paste0("SNP_BLUEs_dist/", snp, "_yield_dist.pdf"), plot = p,
+         width = 16, height = 8.5, dpi = 350)
+  
+}
+```
+
+Next do it with just dominant vs recessive haplotypes i.e. if 1-dom alt:
+AAAA = recessive, AAAB, AABB, ABBB, BBBB = dominant.
+
+```{r}
+#create a lookup table for the different models (see results summary table)
+yield_SNP_models <- data.frame(
+  SNP = c(colnames(yield_BLUEs_dist)[3:10]),
+  model = c("1-dom-alt", "1-dom-ref", "2-dom-alt", "1-dom-ref", "1-dom-alt",
+            "1-dom-ref", "1-dom-alt", "1-dom-ref")
+)
+
+#recode data
+yield_SNP_recode <- yield_BLUEs_dist %>%
+  
+  #convert to long format
+  pivot_longer(cols = starts_with("solcap"),
+               names_to = "SNP",
+               values_to = "genotype") %>%
+  
+  #merge with lookup table
+  left_join(yield_SNP_models, by = "SNP") %>%
+  
+  #recode based on model
+  mutate(genotype_class = case_when(
+      model == "1-dom-alt" & genotype == "AAAA" ~ "recessive (AAAA)",
+      model == "1-dom-alt" & genotype == "AAAB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "AABB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "ABBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "BBBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == NA ~ NA,
+      model == "1-dom-ref" & genotype == "BBBB" ~ "recessive (BBBB)",
+      model == "1-dom-ref" & genotype == "AAAA" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AAAB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AABB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "ABBB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == NA ~ NA,
+      model == "2-dom-alt" & genotype == "AAAA" ~ "recessive (AAA-)",
+      model == "2-dom-alt" & genotype == "AAAB" ~ "recessive (AAA-)",
+      model == "2-dom-alt" & genotype == "AABB" ~ "duplex dominant (--BB)",
+      model == "2-dom-alt" & genotype == "ABBB" ~ "duplex dominant (--BB)",
+      model == "2-dom-alt" & genotype == "BBBB" ~ "duplex dominant (--BB)",
+      model == "2-dom-alt" & genotype == NA ~ NA,
+    )) %>%
+  
+  #select required data
+  select(yield_kg, SNP, genotype_class)
+
+#create vector of SNPs
+snps <- unique(yield_SNP_recode$SNP)
+    
+#loop through each SNP
+for(snp in snps){
+    
+  #filter by current snp + remove NAs
+  df <- yield_SNP_recode %>%
+    filter(SNP == snp) %>%
+    na.omit()
+  
+  # Get unique genotypes in alphabetical order (for display)
+  unique_genos <- sort(unique(df$genotype_class))
+  
+  # Assign alternating colors based on position
+  alt_colors <- rep(c("#440155", "#2D908C"), length.out = length(unique_genos))
+  names(alt_colors) <- unique_genos
+  
+  p <- df %>%
+    na.omit() %>%
+    ggplot(aes(x = genotype_class, y = yield_kg, #snp vs yield BLUE
+               col = genotype_class))+ #colors
+    geom_boxplot() + #boxplots
+    geom_jitter() + #show points
+    scale_color_manual(values = alt_colors) + #alternating colors
+    scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
+    labs(x = snp, y = "Yield (Kg) BLUE") + #adjust labels
+    
+    #adjust theme
+    theme(
+    panel.grid.major = element_blank(), #remove major grid lines
+    panel.grid.minor = element_blank(), #remove minor grid lines
+    axis.line = element_line(), #add lines to axes
+    axis.text.x = element_text(size = 40), #larger x axis text
+    axis.title.x = element_text(size = 40), #larger x axis title
+    axis.text.y = element_text(size = 40), #larger y axis text
+    axis.title.y = element_text(size = 40), #larger y axis title
+    legend.position = "none" #no legend
+    )
+  
+  #save plots
+    ggsave(filename = paste0("SNP_BLUEs_dist/", snp, "_yield_dist_recode.pdf"), 
+           plot = p, width = 16, height = 8.5, dpi = 350)
+    
+}
+```
+
+# Plot max canopy area data
+
+Do it with all genotypes separately
+
+```{r}
+#create vector of SNPs
+snps <- 
+  names(area_BLUEs_dist)[grepl("solcap", names(area_BLUEs_dist))]
+
+#loop through each SNP
+for(snp in snps){
+  
+  #extract and prep data for current snp
+   df <- area_BLUEs_dist %>%
+    select(Max_area_plant_m2, all_of(snp)) %>% #note dont need cultivar ID
+    na.omit() #remove NAs
+  
+  # Get unique genotypes in alphabetical order (for display)
+  unique_genos <- sort(unique(df[[snp]]))
+  
+  # Assign colours based on genotype
+  colors <- c("AAAA" = "#75D3FF",
+              "AAAB" = "#57B0FF",
+              "AABB" = "#3D87FF",
+              "ABBB" = "#2957FF",
+              "BBBB" = "#191DF7")
+  
+  p <- area_BLUEs_dist %>%
+    na.omit() %>%
+    ggplot(aes(x = .[[snp]], y = Max_area_plant_m2, #snp vs area BLUE
+               col = .[[snp]]))+ #colors
+    geom_boxplot() + #boxplots
+    geom_jitter() + #show points
+    scale_color_manual(values = colors) + #genotype-specific colors
+    scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
+    labs(x = snp, #adjust labels
+         y = expression("Max canopy area (m"^2*") BLUE")) + 
+    
+    #adjust theme
+    theme(
+      panel.grid.major = element_blank(), #remove major grid lines
+      panel.grid.minor = element_blank(), #remove minor grid lines
+      axis.line = element_line(), #add lines to axes
+      axis.text.x = element_text(size = 40), #larger x axis text
+      axis.title.x = element_text(size = 40), #larger x axis title
+      axis.text.y = element_text(size = 40), #larger y axis text
+      axis.title.y = element_text(size = 40), #larger y axis title
+      legend.position = "none" #no legend 
+    )
+  
+  #save plots
+  ggsave(filename = paste0("SNP_BLUEs_dist/", snp, "_area_dist.pdf"), plot = p,
+         width = 16, height = 8.5, dpi = 350)
+}
+```
+
+Next do it with just dominant vs recessive haplotypes i.e. if 1-dom alt:
+AAAA = recessive, AAAB, AABB, ABBB, BBBB = dominant.
+
+```{r}
+#create a lookup table for the different models (see results summary table)
+area_SNP_models <- data.frame(
+  SNP = c(colnames(area_BLUEs_dist)[3:4]),
+  model = c("1-dom-ref", "1-dom-alt")
+)
+
+#recode data
+area_SNP_recode <- area_BLUEs_dist %>%
+  
+  #convert to long format
+  pivot_longer(cols = starts_with("solcap"),
+               names_to = "SNP",
+               values_to = "genotype") %>%
+  
+  #merge with lookup table
+  left_join(area_SNP_models, by = "SNP") %>%
+  
+  #recode based on model
+   mutate(genotype_class = case_when(
+      model == "1-dom-alt" & genotype == "AAAA" ~ "recessive (AAAA)",
+      model == "1-dom-alt" & genotype == "AAAB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "AABB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "ABBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == "BBBB" ~ "simplex dominant (---B)",
+      model == "1-dom-alt" & genotype == NA ~ NA,
+      model == "1-dom-ref" & genotype == "BBBB" ~ "recessive (BBBB)",
+      model == "1-dom-ref" & genotype == "AAAA" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AAAB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "AABB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == "ABBB" ~ "simplex dominant (A---)",
+      model == "1-dom-ref" & genotype == NA ~ NA
+    )) %>%
+  
+  #select required data
+  select(Max_area_plant_m2, SNP, genotype_class)
+
+#create vector of SNPs
+snps <- unique(area_SNP_recode$SNP)
+
+#loop through each SNP
+for(snp in snps){
+  
+  #filter by current snp + remove NAs
+  df <- area_SNP_recode %>%
+    filter(SNP == snp) %>%
+    na.omit()
+  
+  # Get unique genotypes in alphabetical order (for display)
+  unique_genos <- sort(unique(df$genotype_class))
+  
+  # Assign alternating colors based on position
+  alt_colors <- rep(c("#440155", "#2D908C"), length.out = length(unique_genos))
+  names(alt_colors) <- unique_genos
+  
+  p <- df %>%
+    na.omit() %>%
+    ggplot(aes(x = genotype_class, y = Max_area_plant_m2, #snp vs area BLUE
+               col = genotype_class))+ #colors
+    geom_boxplot() + #boxplots
+    geom_jitter() + #show points
+    scale_color_manual(values = alt_colors) + #alternating colors
+    scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
+    labs(x = snp, #adjust labels
+         y = expression("Max canopy area (m"^2*") BLUE")) +
+    
+    #adjust theme
+    theme(
+      panel.grid.major = element_blank(), #remove major grid lines
+      panel.grid.minor = element_blank(), #remove minor grid lines
+      axis.line = element_line(), #add lines to axes
+      axis.text.x = element_text(size = 40), #larger x axis text
+      axis.title.x = element_text(size = 40), #larger x axis title
+      axis.text.y = element_text(size = 40), #larger y axis text
+      axis.title.y = element_text(size = 40), #larger y axis title
+      legend.position = "none" #no legend
+    )
+  
+  #save plots
+  ggsave(filename = paste0("SNP_BLUEs_dist/", snp, "_area_dist_recode.pdf"), 
+         plot = p, width = 16, height = 8.5, dpi = 350)
+  
+}
+```
+
