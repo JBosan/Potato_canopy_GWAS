@@ -1,0 +1,13 @@
+﻿Model,Trait,Threshold,Marker,Chrom,Position,"""-log10p"""
+Naïve,Plant.Height,5,solcap_snp_c2_12126,1,71450692,5.34
+Naïve,Plant.Height,5,solcap_snp_c2_51803,1,4263748,5.18
+Naïve,Plant.Height,5,solcap_snp_c2_49911,1,86095563,5.13
+Naïve,Plant.Height,5,solcap_snp_c2_49905,1,86153327,5.11
+Naïve,Plant.Height,5,solcap_snp_c1_3853,1,72112445,5.1
+Naïve,Plant.Height,5,solcap_snp_c2_50302,5,5055763,6.85
+Naïve,Plant.Height,5,solcap_snp_c2_3167,6,4444482,5.31
+Naïve,Plant.Height,5,solcap_snp_c2_46994,6,6422832,5.03
+K,Plant.Height,5,solcap_snp_c2_50302,5,5055763,5.3
+Q,Plant.Height,5,solcap_snp_c1_3853,1,72112445,5.16
+Q,Plant.Height,5,solcap_snp_c1_1481,7,15669100,5.05
+QK,NA,NA,NA,NA,NA,NA
