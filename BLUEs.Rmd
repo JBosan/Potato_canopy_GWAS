@@ -413,6 +413,13 @@ Max_volume_plant_m3_ID148 <- phenotype_17_18 %>%
 phenotype_17_18$Max_volume_plant_m3[1177] <- Max_volume_plant_m3_ID148
 phenotype_17_18$Max_volume_plant_m3[1178] <- Max_volume_plant_m3_ID148
 ```
+Finally we shall save the clean phenotype data for future plotting.
+
+```{r}
+write.csv(phenotype_17_18, file = "BLUEs_output/clean_phenotype_data_17_18.csv", row.names = F)
+
+write.csv(phenotype, file = "BLUEs_output/clean_phenotype_data.csv", row.names = F)
+```
 
 # BLUEs
 
