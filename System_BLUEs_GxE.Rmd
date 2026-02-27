@@ -1,0 +1,677 @@
+---
+title: "BLUEs_System_GxE"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r, message=FALSE}
+library(readxl) #for loading data from excel files
+library(tidyverse) #for data manipulation
+library(lme4) #for linear models and BLUEs calculation
+```
+
+# Load data
+
+Here we load the required data from the raw_data folder within this
+project.
+
+```{r}
+#load excel file of phenotype data
+phenotype <- read.csv(
+  file = "raw_data/phenotype/Alldata2016-2018 3sd NA_FINAL_NO_ISSUES.csv") 
+```
+
+# Add index column
+
+For subsequent analysis it will be helpful to add an index for the varieties to
+save typing out full variety names.
+
+```{r}
+phenotype <- phenotype %>%
+  mutate(Genotype_ID = rep(1:282, each = 12)) %>% #282 vars each repeated x12
+  relocate(Genotype_ID, before = Variety.name) %>% #move before variety.name col
+  rename(Variety.name = before) #rename before col back to variety.name
+         
+head(phenotype[1:6]) #check result
+```
+
+# Traits of interest
+
+Since we have data for 140 different traits we will focus on those of particular
+interest.
+
+These traits are:
+
+- Yield (Kg)
+- Max Max height (m) = maximum recorded height for max/highest point of plant
+- Max Ave height (m) = maximum average height
+- Max_area_plant (m2) = maximum plant area
+- Max_volume_plant (m3) = max plant volume
+
+First create a vector of traits of interest for future use.
+
+```{r}
+traits_of_interest <- phenotype %>%
+  select(Yield_Kg, 
+         Max_Max_height_m,
+         Max_Ave_height_m,
+         Max_area_plant_m2,
+         Max_volume_plant_m3) %>%
+  colnames()
+```
+
+Since certain traits in the data are not measured every year we need to check 
+when our traits of interest have been measured. We can do this as follows...
+
+### 2016
+
+```{r}
+phenotype %>%
+  filter(Year == 2016) %>% #filter by year
+  select(all_of(traits_of_interest)) %>% #select the traits of interest
+  sapply(., \(x) is.na(x)) %>% #logical vector checking if entries are NA
+  as.data.frame() %>% #convert to df
+  colSums() %>% #calculate colsums i.e. if no NAs will equal 0
+  as.data.frame() %>% #convert back to df
+  filter(. < 1128) #>1128 NAs = the year is missing as 1128 rows per year
+```
+Based on this only Yield_Kg has the data required for analysis in 2016.
+
+### 2017
+```{r}
+phenotype %>%
+  filter(Year == 2017) %>% #filter by year
+  select(all_of(traits_of_interest)) %>% #select the traits of interest
+  sapply(., \(x) is.na(x)) %>% #logical vector checking if entries are NA
+  as.data.frame() %>% #convert to df
+  colSums() %>% #calculate colsums i.e. if no NAs will equal 0
+  as.data.frame() %>% #convert back to df
+  filter(. < 1128) #>1128 NAs = the year is missing as 1128 rows per year
+```
+
+Based on this all traits of interest are measured in 2017.
+
+### 2018
+
+```{r}
+phenotype %>%
+  filter(Year == 2018) %>% #filter by year
+  select(all_of(traits_of_interest)) %>% #select the traits of interest
+  sapply(., \(x) is.na(x)) %>% #logical vector checking if entries are NA
+  as.data.frame() %>% #convert to df
+  colSums() %>% #calculate colsums i.e. if no NAs will equal 0
+  as.data.frame() %>% #convert back to df
+  filter(. < 1128) #>1128 NAs = the year is missing as 1128 rows per year
+```
+
+Based on this all traits of interest are measured in 2018.
+
+Overall yield is measured across all three years, the other traits of interest
+are only measured in 2017 and 2018.
+
+We will create a subset of traits in 2017 and 2018 for subsequent analysis.
+
+```{r}
+phenotype_17_18 <- phenotype %>%
+  filter(Year == 2017 | Year == 2018)
+```
+
+# Replace NA values
+
+As demonstrated for the above, even when the traits are measured for a given
+year there are some values missing. Thus, we now need to check for and 
+replace NAs for each of the different traits.
+
+### Check for and replace NAs for yield_kg
+
+Unlike the other traits, yield is measured across all three years so we 
+will just use the full dataset.
+
+```{r}
+phenotype %>%
+  filter(is.na(Yield_Kg)) %>% #select NA values
+  select(Genotype_ID) %>% #display genotype ID col
+  pull() #show as vector
+```
+
+Based on this genotypes/varieties 93 and 115 are NA. We can see this in more
+detail below...
+
+```{r}
+phenotype %>%
+  rownames_to_column() %>%
+  filter(Genotype_ID == 93 
+         | Genotype_ID == 115) %>% #filter to genotypes with NA for yield
+  select(rowname,
+         System,
+         Genotype_ID,
+         Variety.name, 
+         Replicate, 
+         Year, 
+         Yield_Kg) #select info cols + yield trait
+```
+
+Looking at this the NAs for are in rows 1114 (ID 93) and 1378 (ID 115). 
+They are also both for Organic, Replicate 2 in 2018. Thus to account for this 
+missing data we will just replace the NAs with Organic, Replicate 1 in 2018 for 
+each variety.
+
+```{r}
+#select replacement data for genotype 93
+yield_ID93 <- phenotype %>%
+  filter(Genotype_ID == 93 
+         & System == "Org" 
+         & Replicate == 1
+         & Year == 2018) %>%
+  select(Yield_Kg) %>%
+  pull()
+
+#replace NA for genotype 93
+phenotype$Yield_Kg[1114] <- yield_ID93
+
+#select replacement data for genotype 115
+yield_ID115 <- phenotype %>%
+  filter(Genotype_ID == 115 
+         & System == "Org" 
+         & Replicate == 1
+         & Year == 2018) %>%
+  select(Yield_Kg) %>%
+  pull()
+
+#replace NA for genotype 115
+phenotype$Yield_Kg[1378] <- yield_ID115
+```
+
+### Check for and replace NAs for height, area, volume traits.
+
+Only measured in 2017 and 18 so use the subset of data. Done all together as 
+same number of NAs for each trait = likely the same values missing.
+
+```{r}
+#Max_Max_height_m
+phenotype_17_18 %>%
+  filter(is.na(Max_Max_height_m)) %>% #select NA values
+  select(Genotype_ID) %>% #display genotype ID col
+  rename(Max_Max_height_m_NAs = Genotype_ID) #rename col to make output clear
+
+#Max_Ave_height_m
+phenotype_17_18 %>%
+  filter(is.na(Max_Ave_height_m)) %>% #select NA values
+  select(Genotype_ID) %>% #display genotype ID col
+  rename(Max_Ave_height_m_NAs = Genotype_ID) #rename col to make output clear
+
+#Max_area_plant_m2
+phenotype_17_18 %>%
+  filter(is.na(Max_area_plant_m2)) %>% #select NA values
+  select(Genotype_ID) %>% #display genotype ID col
+  rename(Max_area_plant_m2_NAs = Genotype_ID) #rename col to make output clear
+
+#Max_volume_plant_m3
+phenotype_17_18 %>%
+  filter(is.na(Max_volume_plant_m3)) %>% #select NA values
+  select(Genotype_ID) %>% #display genotype ID col
+  rename(Max_volume_plant_m3_NAs = Genotype_ID) #rename col to make output clear
+```
+
+In the case of all these traits genotype 93 has one NA, 148 has two. 
+We can see this in more detail below...
+
+```{r}
+phenotype_17_18 %>%
+  rownames_to_column() %>%
+  filter(Genotype_ID == 93 
+         | Genotype_ID == 148) %>% #filter to genotypes with NA 
+  filter(is.na(Max_Max_height_m)) %>% #filter to just show NAs
+  select(rowname,
+         System,
+         Genotype_ID,
+         Variety.name, 
+         Replicate, 
+         Year, 
+         Max_Max_height_m,
+         Max_Ave_height_m,
+         Max_area_plant_m2,
+         Max_volume_plant_m3) #select info cols + traits
+```
+
+Thus, for all these traits...
+
+The NA for ID 93 is in row 742 for Organic, Replicate 2 in 2018. 
+We can just replace these NA with Organic, Replicate 1 in 2018 for this variety.
+
+```{r}
+#Max_Max_height_m
+
+#select replacement data for genotype 93
+Max_Max_height_m_ID93 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 93 
+         & System == "Org" 
+         & Replicate == 1
+         & Year == 2018) %>%
+  select(Max_Max_height_m) %>%
+  pull()
+
+#replace NA for genotype 93
+phenotype_17_18$Max_Max_height_m[742] <- Max_Max_height_m_ID93
+
+#Max_Ave_height_m
+
+#select replacement data for genotype 93
+Max_Ave_height_m_ID93 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 93 
+         & System == "Org" 
+         & Replicate == 1
+         & Year == 2018) %>%
+  select(Max_Ave_height_m) %>%
+  pull()
+
+#replace NA for genotype 93
+phenotype_17_18$Max_Ave_height_m[742] <- Max_Ave_height_m_ID93
+
+#Max_area_plant_m2
+
+#select replacement data for genotype 93
+Max_area_plant_m2_ID93 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 93 
+         & System == "Org" 
+         & Replicate == 1
+         & Year == 2018) %>%
+  select(Max_area_plant_m2) %>%
+  pull()
+
+#replace NA for genotype 93
+phenotype_17_18$Max_area_plant_m2[742] <- Max_area_plant_m2_ID93
+
+#Max_volume_plant_m3
+
+#select replacement data for genotype 93
+Max_volume_plant_m3_ID93 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 93 
+         & System == "Org" 
+         & Replicate == 1
+         & Year == 2018) %>%
+  select(Max_volume_plant_m3) %>%
+  pull()
+
+#replace NA for genotype 93
+phenotype_17_18$Max_volume_plant_m3[742] <- Max_volume_plant_m3_ID93
+```
+
+The NAs for ID 148 are both in Organic 2017 (rows 1177 and 1178). Since there is 
+no replicate will replace both these NAs with mean for Organic 2018.
+
+```{r}
+#Max_Max_height_m
+
+#select replacement data for ID 148
+Max_Max_height_m_ID148 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 148 
+         & System == "Org" 
+         & Year == 2018) %>%
+  select(Max_Max_height_m) %>%
+  colMeans()
+
+#replace NA for genotype 148
+phenotype_17_18$Max_Max_height_m[1177] <- Max_Max_height_m_ID148
+phenotype_17_18$Max_Max_height_m[1178] <- Max_Max_height_m_ID148
+
+#Max_Ave_height_m
+
+#select replacement data for ID 148
+Max_Ave_height_m_ID148 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 148 
+         & System == "Org" 
+         & Year == 2018) %>%
+  select(Max_Ave_height_m) %>%
+  colMeans()
+
+#replace NA for genotype 148
+phenotype_17_18$Max_Ave_height_m[1177] <- Max_Ave_height_m_ID148
+phenotype_17_18$Max_Ave_height_m[1178] <- Max_Ave_height_m_ID148
+
+#Max_area_plant_m2
+
+#select replacement data for ID 148
+Max_area_plant_m2_ID148 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 148 
+         & System == "Org" 
+         & Year == 2018) %>%
+  select(Max_area_plant_m2) %>%
+  colMeans()
+
+#replace NA for genotype 148
+phenotype_17_18$Max_area_plant_m2[1177] <- Max_area_plant_m2_ID148
+phenotype_17_18$Max_area_plant_m2[1178] <- Max_area_plant_m2_ID148
+
+#Max_volume_plant_m3
+
+#select replacement data for ID 148
+Max_volume_plant_m3_ID148 <- phenotype_17_18 %>%
+  filter(Genotype_ID == 148 
+         & System == "Org" 
+         & Year == 2018) %>%
+  select(Max_volume_plant_m3) %>%
+  colMeans()
+
+#replace NA for genotype 148
+phenotype_17_18$Max_volume_plant_m3[1177] <- Max_volume_plant_m3_ID148
+phenotype_17_18$Max_volume_plant_m3[1178] <- Max_volume_plant_m3_ID148
+```
+
+# BLUEs
+
+Having selected the traits of interest the next step is to calculate
+Best Linear Unbiased estimates for each trait.
+
+For the original BLUEs (i.e. not System_GxE) this is done by setting up a mixed effect model where...
+
+- Fixed effects = Trait of interest, Genotype (i.e. Trait ~ Genotype)
+- Random effects = Cultivation system (System) and Year
+
+For the System_GxE BLUEs we shall also add 
+
+- Gene x System as a random effect (Genotype:System)
+
+Note that in order for the model to work in lme4 (the package used modelling) 
+we must ensure System, Year and Genotype_ID are set to factors. 
+
+For full data-set (when doing yield_kg trait)
+
+```{r}
+phenotype$Genotype_ID <- as.factor(phenotype$Genotype_ID)
+phenotype$System <- as.factor(phenotype$System)
+phenotype$Year <- as.factor(phenotype$Year)
+```
+
+For 2017/18 data-set (when doing other traits)
+
+```{r}
+phenotype_17_18$Genotype_ID <- as.factor(phenotype_17_18$Genotype_ID)
+phenotype_17_18$System <- as.factor(phenotype_17_18$System)
+phenotype_17_18$Year <- as.factor(phenotype_17_18$Year)
+```
+
+# Yield (Kg)
+
+Yield is measured across all three years so we can just use the full dataset.
+
+### Calculate BLUEs
+
+```{r}
+#note here have used REML = TRUE which gives less biased variance estimates
+#for random effects which is better for calculating BLUEs
+
+yield_lmer <- lmer(formula = Yield_Kg ~ Genotype_ID + (1|System) + (1|Year) + (1|Genotype_ID:System),
+                   data = phenotype,
+                   REML = TRUE)
+```
+
+```{r}
+#note fixef(yield_lmer) is essentially the same as yield_lmer@beta it just gives
+#a named vector instead (fixef(yield_lmer) = ID/name + fixed effect estimate, 
+#yield_lmer@beta = fixed effect estimate).
+
+fe <- fixef(yield_lmer) #extract fixed effects coefficients/estimates
+
+BLUEs <- fe+c(0,rep(fe[1],length(fe)-1)) #add intercept to all subsequent values
+
+yield_BLUEs <- 
+  BLUEs %>% #BLUEs data as vector
+  as_tibble() %>% #convert to tibble
+  mutate(ID = unique(phenotype$Variety.name)) %>% #add variety name col
+  relocate(ID, before = value) %>% #move ID col to front (for GWAS_poly)
+  rename(yield_kg = before) #rename col to yield_kg
+```
+
+### QQ plots
+
+```{r, message=FALSE}
+pdf(file = "System_GxE_BLUEs_output/yield_qq.pdf")
+
+residuals(yield_lmer) %>%
+  as_tibble %>%
+  ggplot(mapping = aes(x = value))+
+  geom_histogram(binwidth = 0.4)
+
+qqnorm(residuals(yield_lmer))
+
+qqline(residuals(yield_lmer))
+
+plot(yield_lmer)
+
+dev.off()
+```
+
+# Max_Max_height_m
+
+### Calculate BLUEs
+
+```{r}
+Max_Max_height_m_lmer <- lmer(formula = Max_Max_height_m ~ Genotype_ID 
+                         + (1|System) + (1|Year) + (1|Genotype_ID:System),
+                         data = phenotype_17_18,
+                         REML = TRUE)
+```
+
+```{r}
+fe <- fixef(Max_Max_height_m_lmer) #extract fixed effects estimates
+
+BLUEs <- fe+c(0,rep(fe[1],length(fe)-1)) #add intercept to all subsequent values
+
+Max_Max_height_m_BLUEs <- 
+  BLUEs %>% #BLUEs data as vector
+  as_tibble() %>% #convert to tibble
+  mutate(ID = unique(phenotype$Variety.name)) %>% #add variety name col
+  relocate(ID, before = value) %>% #move ID col to front (for GWAS_poly)
+  rename(Max_Max_height_m = before) #rename col to Max_Max_height_m
+```
+
+### QQ plots
+
+```{r, message=FALSE}
+pdf(file = "System_GxE_BLUEs_output/Max_Max_height_m_qq.pdf")
+
+qqnorm(residuals(Max_Max_height_m_lmer))
+
+qqline(residuals(Max_Max_height_m_lmer))
+
+plot(Max_Max_height_m_lmer)
+
+dev.off()
+```
+
+# Max_Ave_height_m
+
+### Calculate BLUEs
+
+```{r}
+Max_Ave_height_m_lmer <- lmer(formula = Max_Ave_height_m ~ Genotype_ID 
+                              + (1|System) + (1|Year) + (1|Genotype_ID:System),
+                              data = phenotype_17_18,
+                              REML = TRUE)
+```
+
+```{r}
+fe <- fixef(Max_Ave_height_m_lmer) #extract fixed effects estimates
+
+BLUEs <- fe+c(0,rep(fe[1],length(fe)-1)) #add intercept to all subsequent values
+
+Max_Ave_height_m_BLUEs <- 
+  BLUEs %>% #BLUEs data as vector
+  as_tibble() %>% #convert to tibble
+  mutate(ID = unique(phenotype$Variety.name)) %>% #add variety name col
+  relocate(ID, before = value) %>% #move ID col to front (for GWAS_poly)
+  rename(Max_Ave_height_m = before) #rename col to Max_Ave_height_m
+```
+
+### QQ plots
+
+```{r, message=FALSE}
+pdf(file = "System_GxE_BLUEs_output/Max_Ave_height_m_qq.pdf")
+
+qqnorm(residuals(Max_Ave_height_m_lmer))
+
+qqline(residuals(Max_Ave_height_m_lmer))
+
+plot(Max_Ave_height_m_lmer)
+
+dev.off()
+```
+
+# Max_area_plant_m2
+
+### Calculate BLUEs
+
+```{r}
+Max_area_plant_m2_lmer <- lmer(formula = Max_area_plant_m2 ~ Genotype_ID 
+                              + (1|System) + (1|Year) + (1|Genotype_ID:System),
+                              data = phenotype_17_18,
+                              REML = TRUE)
+```
+
+```{r}
+fe <- fixef(Max_area_plant_m2_lmer) #extract fixed effects estimates
+
+BLUEs <- fe+c(0,rep(fe[1],length(fe)-1)) #add intercept to all subsequent values
+
+Max_area_plant_m2_BLUEs <- 
+  BLUEs %>% #BLUEs data as vector
+  as_tibble() %>% #convert to tibble
+  mutate(ID = unique(phenotype$Variety.name)) %>% #add variety name col
+  relocate(ID, before = value) %>% #move ID col to front (for GWAS_poly)
+  rename(Max_area_plant_m2 = before) #rename col to Max_area_plant_m2
+```
+
+### QQ plots
+
+```{r, message=FALSE}
+pdf(file = "System_GxE_BLUEs_output/Max_area_plant_m2_qq.pdf")
+
+qqnorm(residuals(Max_area_plant_m2_lmer))
+
+qqline(residuals(Max_area_plant_m2_lmer))
+
+plot(Max_area_plant_m2_lmer)
+
+dev.off()
+```
+
+# Max_volume_plant_m3
+
+### Calculate BLUEs
+
+```{r}
+Max_volume_plant_m3_lmer <- lmer(formula = Max_volume_plant_m3 ~ Genotype_ID 
+                               + (1|System) + (1|Year) + (1|Genotype_ID:System),
+                               data = phenotype_17_18,
+                               REML = TRUE)
+```
+
+```{r}
+fe <- fixef(Max_volume_plant_m3_lmer) #extract fixed effects estimates
+
+BLUEs <- fe+c(0,rep(fe[1],length(fe)-1)) #add intercept to all subsequent values
+
+Max_volume_plant_m3_BLUEs <- 
+  BLUEs %>% #BLUEs data as vector
+  as_tibble() %>% #convert to tibble
+  mutate(ID = unique(phenotype$Variety.name)) %>% #add variety name col
+  relocate(ID, before = value) %>% #move ID col to front (for GWAS_poly)
+  rename(Max_volume_plant_m3 = before) #rename col to Max_volume_plant_m3
+```
+
+### QQ plots
+
+```{r, message=FALSE}
+pdf(file = "System_GxE_BLUEs_output/Max_volume_plant_m3_qq.pdf")
+
+qqnorm(residuals(Max_volume_plant_m3_lmer))
+
+qqline(residuals(Max_volume_plant_m3_lmer))
+
+plot(Max_volume_plant_m3_lmer)
+
+dev.off()
+```
+
+# Save BLUES
+
+```{r}
+
+#merge dfs
+all_BLUEs <- cbind(yield_BLUEs,
+      Max_Max_height_m_BLUEs,
+      Max_Ave_height_m_BLUEs,
+      Max_area_plant_m2_BLUEs,
+      Max_volume_plant_m3_BLUEs)
+
+#remove additional ID cols
+all_BLUEs <- all_BLUEs[-c(3,5,7,9)]
+
+write.csv(all_BLUEs, 
+          "System_GxE_BLUEs_output/System_GxE_BLUEs.csv",
+          row.names = FALSE)
+```
+
+Also save BLUEs with Q-matrices from STRUCTURE and DAPC
+in a single file.
+
+```{r}
+#load and prep DAPC membership probabilities/Q-matrix
+DAPC_Q_matrix <- read.csv(file = "DAPC_output/DAPC_membership_probabilities.csv") %>%
+  rename(DAPC_cluster_1 = X1) %>%
+  rename(DAPC_cluster_2 = X2) %>%
+  rename(DAPC_cluster_3 = X3) %>%
+  rename(DAPC_cluster_4 = X4)
+
+#merge BLUEs and DAPC membership probabilities/Q-matrix
+BLUEs_with_DAPC_Q_matrix <- cbind(all_BLUEs, DAPC_Q_matrix)
+BLUEs_with_DAPC_Q_matrix <- 
+  BLUEs_with_DAPC_Q_matrix[-c(7)] #remove additional ID col
+
+################
+
+#load STRUCTURE Q-matrix
+STRUCTURE_Q_matrix <- read.table("STRUCTURE/final_results/bestK/CLUMPP/K3.outfile")
+
+#prep STRUCTURE Q-matrix
+STRUCTURE_Q_matrix <- STRUCTURE_Q_matrix[6:8] %>%
+  rename("STRUCTURE_K1" = V6) %>%
+  rename("STRUCTURE_K2" = V7) %>%
+  rename("STRUCTURE_K3" = V8)
+
+#merge BLUEs with STRUCTURE Q-matrix
+BLUEs_with_Q_matrices <- cbind(BLUEs_with_DAPC_Q_matrix, STRUCTURE_Q_matrix) 
+
+################
+
+#load and prep PCs from PCA
+PCs <- read.csv(file = "DAPC_output/PCA_principal_components.csv") %>%
+  select(-c("ID")) #remove ID col as not needed 
+
+#merge BLUEs with PCs
+BLUEs_with_Q_matrices_and_PCs <- cbind(BLUEs_with_Q_matrices, PCs)
+
+#save final file
+write.csv(BLUEs_with_Q_matrices_and_PCs, 
+          "System_GxE_BLUEs_output/System_GxE_BLUEs_with_Q_matrices_and_PCs.csv",
+          row.names = FALSE)
+
+```
+
+# References
+
+BATES, D., MÄCHLER, M., BOLKER, B., and WALKER, S. (2015). ‘Fitting Linear Mixed-Effects Models Using lme4,’ Journal of Statistical Software, 67(1), pp. 1 - 48. doi:10.18637/jss.v067.i01.
+
+YANG, C.J., RUSSELL, J., RAMSAY, L., THOMAS, W., POWELL, W., and MACKAY, I. (2021). ‘Overcoming barriers to the registration of new plant varieties under the DUS system,’ Communications Biology, 4(1), pp. 302. doi:10.1038/s42003-021-01840-9.
+
+https://github.com/cjyang-work/DUS = github for scripts in yang et al., 2021
+
+
+
