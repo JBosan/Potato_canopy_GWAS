@@ -2,8 +2,13 @@
 Associated code and data for GWAS analysis of potato canopy traits and yield
 
 #### BLUEs
-[BLUEs.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/BLUEs.Rmd) and [/BLUEs_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/BLUEs_output) provide the code used to generate the Best Linear Unbiased Estimates for phenotype
-data and the output of this analysis, respectively.
+[BLUEs.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/BLUEs.Rmd) and [/BLUEs_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/BLUEs_output) provide the code used to generate the baseline Best Linear Unbiased Estimates for phenotype data and the output of this analysis, respectively.
+
+[Year_GxE_BLUEs.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/Year_GxE_BLUEs.Rmd) and [/Year_GxE_BLUEs_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/Year_GxE_BLUEs_output) provide the code used to generate the Best Linear Unbiased Estimates for phenotype data incorportating gene:year as a ranodm effect and the output of this analysis, respectively.
+
+[System_GxE_BLUEs.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/System_GxE_BLUEs.Rmd) and [/System_GxE_BLUEs_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/System_GxE_BLUEs_output) provide the code used to generate the Best Linear Unbiased Estimates for phenotype data incorportating gene:system as a ranodm effect and the output of this analysis, respectively.
+
+[Year_System_GxE_BLUEs.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/Year_System_GxE_BLUEs.Rmd) and [/Year_System_GxE_BLUEs_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/Year_System_GxE_BLUEs_output) provide the code used to generate the baseline Best Linear Unbiased Estimates for phenotype data incorportating gene:year and gene:system as ranodm effects and the output of this analysis, respectively.
 
 #### DAPC
 [DAPC.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/DAPC.Rmd) and [/DAPC_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/DAPC_output) provide the code used to for Discriminant Analysis of Principal Components run using [adegenet v2.1.7](https://github.com/thibautjombart/adegenet) in R and the 
