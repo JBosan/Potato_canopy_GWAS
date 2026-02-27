@@ -16,11 +16,11 @@ Associated code and data for GWAS analysis of potato canopy traits and yield
 #### GWASpoly
 [GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/GWAS_poly.Rmd) and [/GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/GWAS_poly_output) provide the code used for GWAS analysis of baseline BLUEs using [GWASpoly v2.13](https://github.com/jendelman/GWASpoly) and output of this analysis, respectively.
 
-[Year_GxE_GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/Year_GxE_GWAS_poly.Rmd) and [/Year_GxE_GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/Year_GxE_GWAS_poly_output) provide the code used for GWAS analysis of gene:year BLUEs using and output of this analysis, respectively.
+[Year_GxE_GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/Year_GxE_GWAS_poly.Rmd) and [/Year_GxE_GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/Year_GxE_GWAS_poly_output) provide the code used for GWAS analysis of gene:year BLUEs and output of this analysis, respectively.
 
-[System_GxE_GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/System_GxE_GWAS_poly.Rmd) and [/System_GxE_GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/System_GxE_GWAS_poly_output) provide the code used for GWAS analysis of gene:system BLUEs using and output of this analysis, respectively.
+[System_GxE_GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/System_GxE_GWAS_poly.Rmd) and [/System_GxE_GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/System_GxE_GWAS_poly_output) provide the code used for GWAS analysis of gene:system BLUEs and output of this analysis, respectively.
 
-[Year_System_GxE_GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/Year_System_GxE_GWAS_poly.Rmd) and [/Year_System_GxE_GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/Year_System_GxE_GWAS_poly_output) provide the code used for GWAS analysis of gene:year + gene:system BLUEs using and output of this analysis, respectively.
+[Year_System_GxE_GWAS_poly.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/Year_System_GxE_GWAS_poly.Rmd) and [/Year_System_GxE_GWAS_poly_output](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/Year_System_GxE_GWAS_poly_output) provide the code used for GWAS analysis of gene:year + gene:system BLUEs and output of this analysis, respectively.
 
 #### SNP_BLUEs_dist
 [SNP_BLUEs_dist_analysis.Rmd](https://github.com/JBosan/Potato_canopy_GWAS/blob/main/SNP_BLUEs_dist_analysis.Rmd) and [/SNP_BLUEs_dist](https://github.com/JBosan/Potato_canopy_GWAS/tree/main/SNP_BLUEs_dist) provide the code used to visualize the distribution of trait BLUEs for significant SNPs across the five possible genotypes in potato and the resulting boxplots + the relevant data, respectively.
