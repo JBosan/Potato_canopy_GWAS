@@ -29,8 +29,6 @@ yield_BLUEs_dist <-
 #convert SNP dosages to factor
 yield_BLUEs_dist <- yield_BLUEs_dist %>%
   mutate(across(3:10, as.factor))
-
-
 ```
 
 Max canopy area
@@ -58,27 +56,39 @@ for(snp in snps){
   
   #extract and prep data for current snp
    df <- yield_BLUEs_dist %>%
-    select(yield_kg, all_of(snp)) %>% #note dont need cultivar ID
-    na.omit() #remove NAs
+      filter(ID != "EXCALIBUR") %>%
+      filter(ID != "KIFLI") %>% #remove cultivars with >20% excluded from gwas
+      filter(ID != "STIRLING") %>%
+      select(yield_kg, all_of(snp)) %>% #note dont need cultivar ID
+      na.omit() #remove NAs
   
   # Get unique genotypes in alphabetical order (for display)
   unique_genos <- sort(unique(df[[snp]]))
+
+  #create sample counts for each genotype class
+  geno_counts <- table(df[[snp]])
+  
+  #create count labels
+  geno_labels <- paste0(names(geno_counts),"\n(n=", as.vector(geno_counts), ")")
+  
+  #add genotype as label name
+  names(geno_labels) <- names(geno_counts)
   
   # Assign colours based on genotype
-  colors <- c("AAAA" = "#75D3FF",
-              "AAAB" = "#57B0FF",
-              "AABB" = "#3D87FF",
-              "ABBB" = "#2957FF",
-              "BBBB" = "#191DF7")
+  colors <- c("AAAA" = "#4db8ff",
+              "AAAB" = "#2f9bff",
+              "AABB" = "#1e74ff",
+              "ABBB" = "#174fe3",
+              "BBBB" = "#1028b5")
   
-  p <- yield_BLUEs_dist %>%
-    na.omit() %>%
-    ggplot(aes(x = .[[snp]], y = yield_kg, #snp vs yield BLUE
-               col = .[[snp]]))+ #colors
-    geom_boxplot() + #boxplots
-    geom_jitter() + #show points
+  p <- ggplot(df,
+              aes(x = .data[[snp]], y = yield_kg, #snp vs yield BLUE
+                  col = .data[[snp]]))+ #colors
+    geom_boxplot(box.linewidth = 1.5, whisker.linewidth = 1.5, outliers = FALSE) + #boxplots
+    geom_jitter(size = 3, width = 0.25, alpha = 0.6) + #show points
     scale_color_manual(values = colors) + #genotype-specific colors
-    scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
+    scale_x_discrete(limits = unique_genos, #enforce alphabetical order on x-axis
+                     labels = geno_labels) + #add count labels
     labs(x = snp, y = "Yield (Kg) BLUE") + #adjust labels
     
     #adjust theme
@@ -207,28 +217,40 @@ snps <-
 for(snp in snps){
   
   #extract and prep data for current snp
-   df <- area_BLUEs_dist %>%
+  df <- area_BLUEs_dist %>%
+    filter(ID != "EXCALIBUR") %>%
+    filter(ID != "KIFLI") %>% #remove cultivars with >20% excluded from gwas
+    filter(ID != "STIRLING") %>%
     select(Max_area_plant_m2, all_of(snp)) %>% #note dont need cultivar ID
     na.omit() #remove NAs
   
   # Get unique genotypes in alphabetical order (for display)
   unique_genos <- sort(unique(df[[snp]]))
+
+  #create sample counts for each genotype class
+  geno_counts <- table(df[[snp]])
+  
+  #create count labels
+  geno_labels <- paste0(names(geno_counts),"\n(n=", as.vector(geno_counts), ")")
+  
+  #add genotype as label name
+  names(geno_labels) <- names(geno_counts)
   
   # Assign colours based on genotype
-  colors <- c("AAAA" = "#75D3FF",
-              "AAAB" = "#57B0FF",
-              "AABB" = "#3D87FF",
-              "ABBB" = "#2957FF",
-              "BBBB" = "#191DF7")
+  colors <- c("AAAA" = "#4db8ff",
+              "AAAB" = "#2f9bff",
+              "AABB" = "#1e74ff",
+              "ABBB" = "#174fe3",
+              "BBBB" = "#1028b5")
   
-  p <- area_BLUEs_dist %>%
-    na.omit() %>%
-    ggplot(aes(x = .[[snp]], y = Max_area_plant_m2, #snp vs area BLUE
-               col = .[[snp]]))+ #colors
-    geom_boxplot() + #boxplots
-    geom_jitter() + #show points
+  p <- ggplot(df,
+              aes(x = .data[[snp]], y = Max_area_plant_m2, #snp vs area BLUE
+                  col = .data[[snp]]))+ #colors
+    geom_boxplot(box.linewidth = 1.5, whisker.linewidth = 1.5, outliers = FALSE) + #boxplots
+    geom_jitter(size = 3, width = 0.25, alpha = 0.6) + #show points
     scale_color_manual(values = colors) + #genotype-specific colors
-    scale_x_discrete(limits = unique_genos) +  # enforce alphabetical order on x-axis
+    scale_x_discrete(limits = unique_genos, #enforce alphabetical order on x-axis
+                     labels = geno_labels) + #add count labels
     labs(x = snp, #adjust labels
          y = expression("Max canopy area (m"^2*") BLUE")) + 
     
@@ -246,7 +268,7 @@ for(snp in snps){
   
   #save plots
   ggsave(filename = paste0("SNP_BLUEs_dist/", snp, "_area_dist.pdf"), plot = p,
-         width = 16, height = 8.5, dpi = 350)
+         width = 16, height = 9, dpi = 350)
 }
 ```
 
